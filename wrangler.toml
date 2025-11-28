@@ -14,3 +14,11 @@ command = "cargo install -q worker-build && worker-build --release"
 binding = "vault1"
 database_name = "vault1"
 database_id = "${D1_DATABASE_ID}"
+
+[env.dev]
+name = "warden-worker-dev"
+
+[[env.dev.d1_databases]]
+binding = "vault1"
+database_name = "vault1-dev" 
+database_id = "${D1_DATABASE_ID_DEV}"
