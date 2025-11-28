@@ -1,5 +1,6 @@
 use axum::{extract::State, Json};
 use chrono::Utc;
+use serde::Deserialize;
 use std::sync::Arc;
 use uuid::Uuid;
 use worker::{query, Env};
@@ -156,15 +157,75 @@ pub async fn update_cipher(
     Ok(Json(cipher))
 }
 
+/// Request body for bulk cipher operations
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CipherIdsData {
+    pub ids: Vec<String>,
+}
+
+/// Soft delete a single cipher (PUT /api/ciphers/{id}/delete)
+/// Sets deleted_at to current timestamp
 #[worker::send]
-pub async fn delete_cipher(
+pub async fn soft_delete_cipher(
+    claims: Claims,
+    State(env): State<Arc<Env>>,
+    Path(id): Path<String>,
+) -> Result<Json<()>, AppError> {
+    let db = db::get_db(&env)?;
+    let now = Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
+
+    query!(
+        &db,
+        "UPDATE ciphers SET deleted_at = ?1, updated_at = ?1 WHERE id = ?2 AND user_id = ?3",
+        now,
+        id,
+        claims.sub
+    )
+    .map_err(|_| AppError::Database)?
+    .run()
+    .await?;
+
+    Ok(Json(()))
+}
+
+/// Soft delete multiple ciphers (PUT /api/ciphers/delete)
+#[worker::send]
+pub async fn soft_delete_ciphers_bulk(
+    claims: Claims,
+    State(env): State<Arc<Env>>,
+    Json(payload): Json<CipherIdsData>,
+) -> Result<Json<()>, AppError> {
+    let db = db::get_db(&env)?;
+    let now = Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
+
+    for id in payload.ids {
+        query!(
+            &db,
+            "UPDATE ciphers SET deleted_at = ?1, updated_at = ?1 WHERE id = ?2 AND user_id = ?3",
+            now,
+            id,
+            claims.sub
+        )
+        .map_err(|_| AppError::Database)?
+        .run()
+        .await?;
+    }
+
+    Ok(Json(()))
+}
+
+/// Hard delete a single cipher (DELETE /api/ciphers/{id} or POST /api/ciphers/{id}/delete)
+/// Permanently removes the cipher from database
+#[worker::send]
+pub async fn hard_delete_cipher(
     claims: Claims,
     State(env): State<Arc<Env>>,
     Path(id): Path<String>,
 ) -> Result<Json<()>, AppError> {
     let db = db::get_db(&env)?;
 
-    let res = query!(
+    query!(
         &db,
         "DELETE FROM ciphers WHERE id = ?1 AND user_id = ?2",
         id,
@@ -175,6 +236,125 @@ pub async fn delete_cipher(
     .await?;
 
     Ok(Json(()))
+}
+
+/// Hard delete multiple ciphers (DELETE /api/ciphers or POST /api/ciphers/delete)
+#[worker::send]
+pub async fn hard_delete_ciphers_bulk(
+    claims: Claims,
+    State(env): State<Arc<Env>>,
+    Json(payload): Json<CipherIdsData>,
+) -> Result<Json<()>, AppError> {
+    let db = db::get_db(&env)?;
+
+    for id in payload.ids {
+        query!(
+            &db,
+            "DELETE FROM ciphers WHERE id = ?1 AND user_id = ?2",
+            id,
+            claims.sub
+        )
+        .map_err(|_| AppError::Database)?
+        .run()
+        .await?;
+    }
+
+    Ok(Json(()))
+}
+
+/// Restore a single cipher (PUT /api/ciphers/{id}/restore)
+/// Clears the deleted_at timestamp
+#[worker::send]
+pub async fn restore_cipher(
+    claims: Claims,
+    State(env): State<Arc<Env>>,
+    Path(id): Path<String>,
+) -> Result<Json<Cipher>, AppError> {
+    let db = db::get_db(&env)?;
+    let now = Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
+
+    // Update the cipher to clear deleted_at
+    query!(
+        &db,
+        "UPDATE ciphers SET deleted_at = NULL, updated_at = ?1 WHERE id = ?2 AND user_id = ?3",
+        now,
+        id,
+        claims.sub
+    )
+    .map_err(|_| AppError::Database)?
+    .run()
+    .await?;
+
+    // Fetch and return the restored cipher
+    let cipher_db: crate::models::cipher::CipherDBModel = query!(
+        &db,
+        "SELECT * FROM ciphers WHERE id = ?1 AND user_id = ?2",
+        id,
+        claims.sub
+    )
+    .map_err(|_| AppError::Database)?
+    .first(None)
+    .await?
+    .ok_or(AppError::NotFound("Cipher not found".to_string()))?;
+
+    Ok(Json(cipher_db.into()))
+}
+
+/// Response for bulk restore operation
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BulkRestoreResponse {
+    pub data: Vec<Cipher>,
+    pub object: String,
+    pub continuation_token: Option<String>,
+}
+
+/// Restore multiple ciphers (PUT /api/ciphers/restore)
+#[worker::send]
+pub async fn restore_ciphers_bulk(
+    claims: Claims,
+    State(env): State<Arc<Env>>,
+    Json(payload): Json<CipherIdsData>,
+) -> Result<Json<BulkRestoreResponse>, AppError> {
+    let db = db::get_db(&env)?;
+    let now = Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
+
+    let mut restored_ciphers = Vec::new();
+
+    for id in payload.ids {
+        // Update the cipher to clear deleted_at
+        query!(
+            &db,
+            "UPDATE ciphers SET deleted_at = NULL, updated_at = ?1 WHERE id = ?2 AND user_id = ?3",
+            now,
+            id,
+            claims.sub
+        )
+        .map_err(|_| AppError::Database)?
+        .run()
+        .await?;
+
+        // Fetch the restored cipher
+        let cipher_db: Option<crate::models::cipher::CipherDBModel> = query!(
+            &db,
+            "SELECT * FROM ciphers WHERE id = ?1 AND user_id = ?2",
+            id,
+            claims.sub
+        )
+        .map_err(|_| AppError::Database)?
+        .first(None)
+        .await?;
+
+        if let Some(cipher) = cipher_db {
+            restored_ciphers.push(cipher.into());
+        }
+    }
+
+    Ok(Json(BulkRestoreResponse {
+        data: restored_ciphers,
+        object: "list".to_string(),
+        continuation_token: None,
+    }))
 }
 
 /// Handler for POST /api/ciphers
