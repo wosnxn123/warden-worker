@@ -277,13 +277,19 @@ pub struct CipherRequestData {
     pub reprompt: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_known_revision_date: Option<String>,
+    /// Cipher key field used for cipher key rotation scenarios
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
 }
 
 // Represents the full request payload for creating a cipher.
+// Supports both camelCase and PascalCase for compatibility with different clients.
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "PascalCase")]
+#[serde(rename_all = "camelCase")]
 pub struct CreateCipherRequest {
+    #[serde(alias = "Cipher")]
     pub cipher: CipherRequestData,
     #[serde(default)]
+    #[serde(alias = "CollectionIds")]
     pub collection_ids: Vec<String>,
 }

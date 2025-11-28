@@ -176,3 +176,70 @@ pub async fn delete_cipher(
 
     Ok(Json(()))
 }
+
+/// Handler for POST /api/ciphers
+/// Accepts flat JSON structure (camelCase) as sent by Bitwarden clients
+/// when creating a cipher without collection assignments.
+#[worker::send]
+pub async fn create_cipher_simple(
+    claims: Claims,
+    State(env): State<Arc<Env>>,
+    Json(payload): Json<CipherRequestData>,
+) -> Result<Json<Cipher>, AppError> {
+    let db = db::get_db(&env)?;
+    let now = Utc::now();
+    let now = now.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
+
+    let cipher_data = CipherData {
+        name: payload.name,
+        notes: payload.notes,
+        login: payload.login,
+        card: payload.card,
+        identity: payload.identity,
+        secure_note: payload.secure_note,
+        fields: payload.fields,
+        password_history: payload.password_history,
+        reprompt: payload.reprompt,
+    };
+
+    let data_value = serde_json::to_value(&cipher_data).map_err(|_| AppError::Internal)?;
+
+    let cipher = Cipher {
+        id: Uuid::new_v4().to_string(),
+        user_id: Some(claims.sub.clone()),
+        organization_id: payload.organization_id.clone(),
+        r#type: payload.r#type,
+        data: data_value,
+        favorite: payload.favorite,
+        folder_id: payload.folder_id.clone(),
+        deleted_at: None,
+        created_at: now.clone(),
+        updated_at: now.clone(),
+        object: "cipher".to_string(),
+        organization_use_totp: false,
+        edit: true,
+        view_password: true,
+        collection_ids: None,
+    };
+
+    let data = serde_json::to_string(&cipher.data).map_err(|_| AppError::Internal)?;
+
+    query!(
+        &db,
+        "INSERT INTO ciphers (id, user_id, organization_id, type, data, favorite, folder_id, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+         cipher.id,
+         cipher.user_id,
+         cipher.organization_id,
+         cipher.r#type,
+         data,
+         cipher.favorite,
+         cipher.folder_id,
+         cipher.created_at,
+         cipher.updated_at,
+    ).map_err(|_| AppError::Database)?
+    .run()
+    .await?;
+
+    Ok(Json(cipher))
+}
