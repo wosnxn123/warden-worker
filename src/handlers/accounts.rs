@@ -9,6 +9,7 @@ use crate::{
     db,
     error::AppError,
     models::user::{PreloginResponse, RegisterRequest, User},
+    auth::Claims,
 };
 
 #[worker::send]
@@ -101,4 +102,28 @@ pub async fn register(
 #[worker::send]
 pub async fn send_verification_email() -> String {
     "fixed-token-to-mock".to_string()
+}
+
+#[worker::send]
+pub async fn revision_date(
+    claims: Claims,
+    State(env): State<Arc<Env>>,
+) -> Result<Json<i64>, AppError> {
+    let db = db::get_db(&env)? ;
+    
+    // get the user's updated_at timestamp
+    let updated_at: Option<String> = db
+        .prepare("SELECT updated_at FROM users WHERE id = ?1")
+        .bind(&[claims.sub. into()])?
+        .first(Some("updated_at"))
+        .await
+        .map_err(|_| AppError::Database)?;
+        
+    // convert the timestamp to a millisecond-level Unix timestamp
+    let revision_date = updated_at
+        .and_then(|ts| chrono::DateTime::parse_from_rfc3339(&ts). ok())
+        . map(|dt| dt.timestamp_millis())
+        .unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
+    
+    Ok(Json(revision_date))
 }
