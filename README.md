@@ -104,6 +104,35 @@ There are no immediate plans to implement these features. The primary goal of th
 
 This project requires minimal configuration. The main configuration is done in the `wrangler.toml` file, where you specify your D1 database binding.
 
+### Other Environment Variables
+
+You can configure the following environment variables in `wrangler.toml` under the `[vars]` section, or set them via Cloudflare Dashboard:
+
+*   **`TRASH_AUTO_DELETE_DAYS`** (Optional, Default: `30`)
+    
+    Number of days to keep soft-deleted items before automatically purging them. When a cipher is deleted, it's marked with a `deleted_at` timestamp (soft delete). After the specified number of days, the item will be permanently removed from the database.
+    
+    *   Set to `0` or a negative value to disable automatic purging
+    *   Defaults to `30` days if not specified
+    *   Example: `TRASH_AUTO_DELETE_DAYS = "7"` to keep deleted items for 7 days
+
+*   **`IMPORT_BATCH_SIZE`** (Optional, Default: `30`)
+    
+    Number of records to process in each batch when importing data. This helps manage memory usage and processing time for large imports.
+    
+    *   Set to `0` to disable batching (all records imported in a single batch)
+    *   Defaults to `30` records per batch if not specified
+    *   Example: `IMPORT_BATCH_SIZE = "50"` to process 50 records per batch
+
+### Scheduled Tasks (Cron)
+
+The worker includes a scheduled task that runs automatically to clean up soft-deleted items. By default, this task runs daily at 03:00 UTC.
+
+*   **Automatic Cleanup:** The scheduled task automatically purges ciphers that have been soft-deleted for longer than the `TRASH_AUTO_DELETE_DAYS` period
+*   **Schedule:** Configured in `wrangler.toml` under `[triggers]` section with cron expression `"0 3 * * *"` (daily at 03:00 UTC)
+
+You can modify the cron schedule in `wrangler.toml` if you want to run the cleanup task at a different time or frequency. See [Cloudflare Cron Triggers documentation](https://developers.cloudflare.com/workers/configuration/cron-triggers/) for cron expression syntax.
+
 ## Contributing
 
 Contributions are welcome! If you find a bug, have a feature request, or want to improve the code, please open an issue or submit a pull request.

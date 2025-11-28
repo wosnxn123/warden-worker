@@ -30,3 +30,26 @@ pub async fn main(
 
     Ok(app.call(req).await?)
 }
+
+/// Scheduled event handler for cron-triggered tasks.
+///
+/// This handler is triggered by Cloudflare's cron triggers configured in wrangler.toml.
+/// It performs automatic cleanup of soft-deleted ciphers that have exceeded the
+/// retention period (default: 30 days, configurable via TRASH_AUTO_DELETE_DAYS env var).
+#[event(scheduled)]
+pub async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) {
+    // Set up logging
+    console_error_panic_hook::set_once();
+    let _ = console_log::init_with_level(log::Level::Debug);
+
+    log::info!("Scheduled task triggered: purging soft-deleted ciphers");
+
+    match handlers::purge::purge_deleted_ciphers(&env).await {
+        Ok(count) => {
+            log::info!("Scheduled purge completed: {} cipher(s) removed", count);
+        }
+        Err(e) => {
+            log::error!("Scheduled purge failed: {:?}", e);
+        }
+    }
+}

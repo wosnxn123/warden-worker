@@ -1,6 +1,7 @@
 name = "warden-worker"
 main = "build/index.js"
 compatibility_date = "2025-09-19"
+keep_vars = true
 
 [build]
 command = "cargo install -q worker-build && worker-build --release"
@@ -8,7 +9,16 @@ command = "cargo install -q worker-build && worker-build --release"
 [vars]
 # Optional: Set the batch size for imports. Defaults to 30 if not set.
 # Set to 0 means no batching (all records imported in a single batch).
-# IMPORT_BATCH_SIZE = "30"  
+# IMPORT_BATCH_SIZE = "30"
+
+# Number of days to keep soft-deleted items before auto-purging.
+# Defaults to 30 days if not set. Set to 0 to disable auto-purge.
+# TRASH_AUTO_DELETE_DAYS = "30"
+
+# Cron triggers for scheduled tasks
+# Runs daily at 03:00 UTC to purge soft-deleted ciphers
+[triggers]
+crons = ["0 3 * * *"]
 
 [[d1_databases]]
 binding = "vault1"
@@ -17,6 +27,11 @@ database_id = "${D1_DATABASE_ID}"
 
 [env.dev]
 name = "warden-worker-dev"
+keep_vars = true
+
+# Dev environment also needs cron triggers
+[env.dev.triggers]
+crons = ["0 3 * * *"]
 
 [[env.dev.d1_databases]]
 binding = "vault1"
