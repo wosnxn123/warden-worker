@@ -149,9 +149,11 @@ pub async fn delete_account(
     let user: User = serde_json::from_value(user).map_err(|_| AppError::Internal)?;
 
     // Verify the master password hash
+    let provided_hash = payload.master_password_hash
+        .ok_or_else(|| AppError::BadRequest("Missing master password hash".to_string()))?;
     if !constant_time_eq(
         user.master_password_hash.as_bytes(),
-        payload.master_password_hash.as_bytes(),
+        provided_hash.as_bytes(),
     ) {
         return Err(AppError::Unauthorized("Invalid password".to_string()));
     }

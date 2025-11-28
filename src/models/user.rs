@@ -79,5 +79,7 @@ pub struct KeyData {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DeleteAccountRequest {
-    pub master_password_hash: String,
+    #[serde(alias = "MasterPasswordHash")]
+    pub master_password_hash: Option<String>,
+    pub otp: Option<String>,
 }
