@@ -161,6 +161,11 @@ impl Serialize for Cipher {
         response_map.insert("favorite".to_string(), json!(self.favorite));
         response_map.insert("edit".to_string(), json!(self.edit));
         response_map.insert("viewPassword".to_string(), json!(self.view_password));
+        // new key "permissions" used by clients since v2025.6.0
+        response_map.insert("permissions". to_string(), json! ({
+            "delete": self.edit,   // if edit is true, allow delete
+            "restore": self.edit,  // if edit is true, allow restore
+        }));
         response_map.insert(
             "organizationUseTotp".to_string(),
             json!(self.organization_use_totp),
