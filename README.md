@@ -133,6 +133,158 @@ The worker includes a scheduled task that runs automatically to clean up soft-de
 
 You can modify the cron schedule in `wrangler.toml` if you want to run the cleanup task at a different time or frequency. See [Cloudflare Cron Triggers documentation](https://developers.cloudflare.com/workers/configuration/cron-triggers/) for cron expression syntax.
 
+### Database Backup (GitHub Actions)
+
+This project includes a GitHub Action workflow that automatically backs up your D1 database to S3-compatible storage daily. The backup runs at 04:00 UTC (1 hour after the cleanup task).
+
+> ⚠️ **Important Notes:** 
+> - **Manual trigger required for first run:** You must manually trigger the Action once (GitHub Actions → Backup D1 Database to S3 → Run workflow) before scheduled backups will run automatically.
+> - **Ensure your S3 bucket is set to private access** to prevent data leaks and avoid unnecessary public traffic costs.
+> - **⚠️ CRITICAL: Do NOT use R2 from the same Cloudflare account as your Worker** for backups. If your Cloudflare account gets suspended or banned, you will lose access to both your Worker and your backup storage, resulting in complete data loss. Always use a separate Cloudflare account or a different S3-compatible storage provider (AWS S3, Backblaze B2, MinIO, etc.) for backups to ensure redundancy and disaster recovery.
+
+#### Required Secrets for Backup
+
+Add the following secrets to your GitHub repository (`Settings > Secrets and variables > Actions`):
+
+| Secret | Required | Description |
+|--------|----------|-------------|
+| `S3_ACCESS_KEY_ID` | yes | Your S3 access key ID |
+| `S3_SECRET_ACCESS_KEY` | yes | Your S3 secret access key |
+| `S3_BUCKET` | yes | The S3 bucket name for storing backups |
+| `S3_REGION` | yes | The S3 region (e.g., `us-east-1`). If unsure, use `auto` |
+| `S3_ENDPOINT` | no | Custom S3 endpoint URL. Defaults to AWS S3 if not set. Required for S3-compatible services (MinIO, Cloudflare R2, Backblaze B2, etc.) |
+| `BACKUP_ENCRYPTION_KEY` | no | Optional encryption passphrase. If set, backups will be encrypted with AES-256. **Strongly recommended** since the database contains unencrypted user metadata (emails, item counts) |
+
+#### Backup Features
+
+*   **Automatic Daily Backups:** Production database is backed up daily at 04:00 UTC
+*   **Manual Trigger:** You can manually trigger a backup from the GitHub Actions tab
+*   **Environment Selection:** When triggering manually, you can choose to backup either `production` or `dev` database
+*   **Compression:** Backups are compressed using gzip to save storage space
+*   **Optional Encryption:** If `BACKUP_ENCRYPTION_KEY` is set, backups are encrypted with AES-256-CBC (PBKDF2 key derivation, 100k iterations)
+*   **Automatic Cleanup:** Old backups older than 30 days are automatically deleted
+*   **S3-Compatible:** Works with AWS S3, Cloudflare R2, MinIO, Backblaze B2, and any S3-compatible storage
+
+#### Backup File Location
+
+Backups are stored in your S3 bucket with the following structure:
+
+```
+# Unencrypted backups
+s3://your-bucket/warden-worker/production/vault1_prod_YYYY-MM-DD_HH-MM-SS.sql.gz
+
+# Encrypted backups (when BACKUP_ENCRYPTION_KEY is set)
+s3://your-bucket/warden-worker/production/vault1_prod_YYYY-MM-DD_HH-MM-SS.sql.gz.enc
+```
+
+#### Decrypting Backups
+
+If you enabled encryption, use the following command to decrypt a backup:
+
+```bash
+openssl enc -aes-256-cbc -d -pbkdf2 -iter 100000 \
+  -in vault1_prod_YYYY-MM-DD_HH-MM-SS.sql.gz.enc \
+  -out backup.sql.gz \
+  -pass pass:"YOUR_ENCRYPTION_KEY"
+
+# Then decompress
+gunzip backup.sql.gz
+```
+
+#### Restoring Database to Cloudflare D1
+
+To restore your D1 database from a backup:
+
+1.  **Download the backup from S3:**
+
+    ```bash
+    # Using AWS CLI
+    aws s3 cp s3://your-bucket/warden-worker/production/vault1_prod_YYYY-MM-DD_HH-MM-SS.sql.gz.enc ./
+    
+    # Or with custom endpoint (e.g., R2, MinIO)
+    aws s3 cp s3://your-bucket/warden-worker/production/vault1_prod_YYYY-MM-DD_HH-MM-SS.sql.gz.enc ./ \
+      --endpoint-url https://your-s3-endpoint.com
+    ```
+
+2.  **Decrypt the backup (if encrypted):**
+
+    ```bash
+    openssl enc -aes-256-cbc -d -pbkdf2 -iter 100000 \
+      -in vault1_prod_YYYY-MM-DD_HH-MM-SS.sql.gz.enc \
+      -out backup.sql.gz \
+      -pass pass:"YOUR_ENCRYPTION_KEY"
+    ```
+
+3.  **Decompress the backup:**
+
+    ```bash
+    gunzip backup.sql.gz
+    ```
+
+4.  **Restore to Cloudflare D1:**
+
+    ```bash
+    # First, you may want to clear the existing database (optional, use with caution!)
+    # wrangler d1 execute vault1 --remote --command "DELETE FROM ciphers; DELETE FROM folders; DELETE FROM users;"
+    
+    # Import the backup
+    wrangler d1 execute vault1 --remote --file=backup.sql
+    ```
+
+    > **Note:** The `--remote` flag is required to execute against your production D1 database. Without it, the command will run against the local development database.
+
+    **Alternative: Using Database ID directly**
+
+    If you don't have `vault1` binding configured in your local `wrangler.toml`, you can use the database ID (UUID) directly instead of the binding name:
+
+    ```bash
+    # Replace YOUR_DATABASE_ID with your actual D1 database UUID
+    # wrangler d1 execute YOUR_DATABASE_ID --remote --command "DELETE FROM ciphers; DELETE FROM folders; DELETE FROM users;"
+    wrangler d1 execute YOUR_DATABASE_ID --remote --file=backup.sql
+    ```
+
+    You can find your database ID in the Cloudflare dashboard under Storage & databases > D1 SQL database, or by running `wrangler d1 list`. 
+
+### Local Development with D1
+
+You can run this Worker locally with full D1 database support using Wrangler. This is useful for development, testing, or as a temporary fallback when Cloudflare services are unavailable.
+
+To run locally with your production data (useful as emergency fallback):
+
+1.  **Download and decrypt your backup** (follow the steps above)
+
+2.  **Import the backup to local D1:**
+
+    ```bash
+    # Without --remote flag, this imports to local database
+    wrangler d1 execute vault1 --file=backup.sql
+    ```
+
+3.  **Start the local server with persistence:**
+
+    ```bash
+    wrangler dev --persist
+    ```
+
+4.  **Configure your Bitwarden client** to use `http://localhost:8787` (or your local network IP for mobile devices)
+
+#### Accessing Local SQLite Database Directly
+
+The local D1 database is stored as a SQLite file. You can access it directly:
+
+```bash
+# Find the database file
+ls .wrangler/state/v3/d1/
+
+# Open with SQLite CLI
+sqlite3 .wrangler/state/v3/d1/miniflare-D1DatabaseObject/*.sqlite
+
+# Example: List all users
+sqlite> SELECT email FROM users;
+```
+
+> **Note:** The local development environment requires Node.js and Wrangler installed. The Worker runs in a simulated environment using [workerd](https://github.com/cloudflare/workerd), Cloudflare's open-source Workers runtime.
+
 ## Contributing
 
 Contributions are welcome! If you find a bug, have a feature request, or want to improve the code, please open an issue or submit a pull request.
