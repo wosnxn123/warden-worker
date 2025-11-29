@@ -5,6 +5,7 @@
 //! retention period.
 
 use chrono::{Duration, Utc};
+use std::collections::HashSet;
 use worker::{query, D1Database, Env};
 
 /// Default number of days to keep soft-deleted items before purging
@@ -23,7 +24,8 @@ fn get_purge_days(env: &Env) -> i64 {
 /// This function:
 /// 1. Calculates the cutoff timestamp based on TRASH_AUTO_DELETE_DAYS env var (default: 30 days)
 /// 2. Deletes all ciphers where deleted_at is not null and older than the cutoff
-/// 3. If TRASH_AUTO_DELETE_DAYS is set to 0 or negative, skips purging (disabled)
+/// 3. Updates the affected users' updated_at to trigger client sync
+/// 4. If TRASH_AUTO_DELETE_DAYS is set to 0 or negative, skips purging (disabled)
 ///
 /// Returns the number of purged records on success.
 pub async fn purge_deleted_ciphers(env: &Env) -> Result<u32, worker::Error> {
@@ -41,6 +43,7 @@ pub async fn purge_deleted_ciphers(env: &Env) -> Result<u32, worker::Error> {
     let now = Utc::now();
     let cutoff = now - Duration::days(purge_days);
     let cutoff_str = cutoff.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
+    let now_str = now.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
 
     log::info!(
         "Purging soft-deleted ciphers older than {} days (before {})",
@@ -48,7 +51,22 @@ pub async fn purge_deleted_ciphers(env: &Env) -> Result<u32, worker::Error> {
         cutoff_str
     );
 
-    // First, count the records to be deleted (for logging purposes)
+    // First, get the list of affected user IDs before deletion
+    let affected_users_result: Vec<AffectedUser> = query!(
+        &db,
+        "SELECT DISTINCT user_id FROM ciphers WHERE deleted_at IS NOT NULL AND deleted_at < ?1 AND user_id IS NOT NULL",
+        cutoff_str
+    )?
+    .all()
+    .await?
+    .results()?;
+
+    let affected_user_ids: HashSet<String> = affected_users_result
+        .into_iter()
+        .filter_map(|u| u.user_id)
+        .collect();
+
+    // Count the records to be deleted (for logging purposes)
     let count_result = query!(
         &db,
         "SELECT COUNT(*) as count FROM ciphers WHERE deleted_at IS NOT NULL AND deleted_at < ?1",
@@ -70,11 +88,34 @@ pub async fn purge_deleted_ciphers(env: &Env) -> Result<u32, worker::Error> {
         .await?;
 
         log::info!("Successfully purged {} soft-deleted cipher(s)", count);
+
+        // Update the affected users' updated_at to trigger client sync
+        for user_id in &affected_user_ids {
+            query!(
+                &db,
+                "UPDATE users SET updated_at = ?1 WHERE id = ?2",
+                now_str,
+                user_id
+            )?
+            .run()
+            .await?;
+        }
+
+        log::info!(
+            "Updated revision date for {} affected user(s)",
+            affected_user_ids.len()
+        );
     } else {
         log::info!("No soft-deleted ciphers to purge");
     }
 
     Ok(count)
+}
+
+/// Helper struct for affected user query result
+#[derive(serde::Deserialize)]
+struct AffectedUser {
+    user_id: Option<String>,
 }
 
 /// Helper struct for count query result
