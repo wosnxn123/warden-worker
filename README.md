@@ -223,27 +223,27 @@ To restore your D1 database from a backup:
 
 4.  **Restore to Cloudflare D1:**
 
+    First, find your database name using wrangler:
+
     ```bash
+    wrangler d1 list
+    ```
+
+    This will show a table with your databases. Look for the `name` column (e.g., `warden-db` for production or `warden-dev` for dev).
+
+    Then restore the backup:
+
+    ```bash
+    # Replace DATABASE_NAME with your actual database name (e.g., warden-db)
+    
     # First, you may want to clear the existing database (optional, use with caution!)
-    # wrangler d1 execute vault1 --remote --command "DELETE FROM ciphers; DELETE FROM folders; DELETE FROM users;"
+    # wrangler d1 execute DATABASE_NAME --remote --command "DELETE FROM ciphers; DELETE FROM folders; DELETE FROM users;"
     
     # Import the backup
-    wrangler d1 execute vault1 --remote --file=backup.sql
+    wrangler d1 execute DATABASE_NAME --remote --file=backup.sql
     ```
 
-    > **Note:** The `--remote` flag is required to execute against your production D1 database. Without it, the command will run against the local development database.
-
-    **Alternative: Using Database ID directly**
-
-    If you don't have `vault1` binding configured in your local `wrangler.toml`, you can use the database ID (UUID) directly instead of the binding name:
-
-    ```bash
-    # Replace YOUR_DATABASE_ID with your actual D1 database UUID
-    # wrangler d1 execute YOUR_DATABASE_ID --remote --command "DELETE FROM ciphers; DELETE FROM folders; DELETE FROM users;"
-    wrangler d1 execute YOUR_DATABASE_ID --remote --file=backup.sql
-    ```
-
-    You can find your database ID in the Cloudflare dashboard under Storage & databases > D1 SQL database, or by running `wrangler d1 list`. 
+    > **Note:** The `--remote` flag is required to execute against your production D1 database. Without it, the command will run against the local development database. 
 
 ### Local Development with D1
 

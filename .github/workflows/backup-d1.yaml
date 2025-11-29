@@ -32,13 +32,27 @@ jobs:
             - name: Install wrangler
               run: npm install -g wrangler
 
+            - name: Get D1 Database Name
+              id: db_name
+              env:
+                  CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+                  CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+              run: |
+                  DB_NAME=$(npx wrangler d1 list --json | jq -r '.[] | select(.uuid == "${{ secrets.D1_DATABASE_ID }}") | .name')
+                  if [ -z "$DB_NAME" ]; then
+                    echo "❌ Error: Could not find database with D1_DATABASE_ID secret"
+                    exit 1
+                  fi
+                  echo "Found database name: $DB_NAME"
+                  echo "db_name=$DB_NAME" >> $GITHUB_OUTPUT
+
             - name: Export D1 Database
               env:
                   CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
                   CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
               run: |
-                  echo "Exporting D1 database..."
-                  npx wrangler d1 export ${{ secrets.D1_DATABASE_ID }} \
+                  echo "Exporting D1 database: ${{ steps.db_name.outputs.db_name }}..."
+                  npx wrangler d1 export "${{ steps.db_name.outputs.db_name }}" \
                     --remote \
                     --output=backup.sql
                   
@@ -133,13 +147,27 @@ jobs:
             - name: Install wrangler
               run: npm install -g wrangler
 
+            - name: Get D1 Database Name (Dev)
+              id: db_name
+              env:
+                  CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+                  CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+              run: |
+                  DB_NAME=$(npx wrangler d1 list --json | jq -r '.[] | select(.uuid == "${{ secrets.D1_DATABASE_ID_DEV }}") | .name')
+                  if [ -z "$DB_NAME" ]; then
+                    echo "❌ Error: Could not find database with D1_DATABASE_ID_DEV secret
+                    exit 1
+                  fi
+                  echo "Found database name: $DB_NAME"
+                  echo "db_name=$DB_NAME" >> $GITHUB_OUTPUT
+
             - name: Export D1 Database (Dev)
               env:
                   CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
                   CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
               run: |
-                  echo "Exporting D1 dev database..."
-                  npx wrangler d1 export ${{ secrets.D1_DATABASE_ID_DEV }} \
+                  echo "Exporting D1 dev database: ${{ steps.db_name.outputs.db_name }}..."
+                  npx wrangler d1 export "${{ steps.db_name.outputs.db_name }}" \
                     --remote \
                     --output=backup.sql
                   
