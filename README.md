@@ -165,6 +165,14 @@ You can configure the following environment variables in `wrangler.toml` under t
     *   Defaults to `30` records per batch if not specified
     *   Example: `IMPORT_BATCH_SIZE = "50"` to process 50 records per batch
 
+*   **`DISABLE_USER_REGISTRATION`** (Optional, Default: `true`)
+    
+    Controls whether the "Create Account" / registration button is displayed in the Bitwarden client UI.
+    
+    *   Set to `false` to show the registration button
+    *   Defaults to `true` (hide registration button)
+    *   **Note:** This setting only affects the client UI display. It does NOT affect the actual registration functionality on the server side.
+
 ### Scheduled Tasks (Cron)
 
 The worker includes a scheduled task that runs automatically to clean up soft-deleted items. By default, this task runs daily at 03:00 UTC.

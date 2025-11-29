@@ -1,9 +1,24 @@
-use axum::Json;
+use axum::{extract::State, Extension, Json};
 use serde_json::{json, Value};
+use std::sync::Arc;
+use worker::Env;
+
+use crate::BaseUrl;
+
+/// Get the disable_user_registration setting from environment variable.
+/// Defaults to true if not set. Only "false" will disable it.
+fn get_disable_user_registration(env: &Env) -> bool {
+    env.var("DISABLE_USER_REGISTRATION")
+        .ok()
+        .map(|v| v.to_string().to_lowercase() != "false")
+        .unwrap_or(true)
+}
 
 #[worker::send]
-pub async fn config() -> Json<Value> {
-    // let domain = crate::CONFIG.domain();
+pub async fn config(
+    State(env): State<Arc<Env>>,
+    Extension(BaseUrl(domain)): Extension<BaseUrl>,
+) -> Json<Value> {
     // Official available feature flags can be found here:
     // Server (v2025.6.2): https://github.com/bitwarden/server/blob/d094be3267f2030bd0dc62106bc6871cf82682f5/src/Core/Constants.cs#L103
     // Client (web-v2025.6.1): https://github.com/bitwarden/clients/blob/747c2fd6a1c348a57a76e4a7de8128466ffd3c01/libs/common/src/enums/feature-flag.enum.ts#L12
@@ -16,8 +31,9 @@ pub async fn config() -> Json<Value> {
     // feature_states.insert("unauth-ui-refresh".to_string(), true);
     // feature_states.insert("enable-pm-flight-recorder".to_string(), true);
     // feature_states.insert("mobile-error-reporting".to_string(), true);
+    
+    let disable_user_registration = get_disable_user_registration(&env);
 
-    let domain = "https://warden-worker.deepgauravraj.workers.dev";
     Json(json!({
         // Note: The clients use this version to handle backwards compatibility concerns
         // This means they expect a version that closely matches the Bitwarden server version
@@ -31,7 +47,7 @@ pub async fn config() -> Json<Value> {
           "url": "https://github.com/dani-garcia/vaultwarden"
         },
         "settings": {
-            "disableUserRegistration": true,
+            "disableUserRegistration": disable_user_registration,
         },
         "environment": {
           "vault": domain,
