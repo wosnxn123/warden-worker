@@ -20,6 +20,9 @@ pub async fn main(
     console_error_panic_hook::set_once();
     let _ = console_log::init_with_level(log::Level::Debug);
 
+    // Ensure database schema is up to date (adds password_salt column if missing)
+    db::ensure_schema(&env).await;
+
     // Allow all origins for CORS, which is typical for a public API like Bitwarden's.
     let cors = CorsLayer::new()
         .allow_methods(Any)

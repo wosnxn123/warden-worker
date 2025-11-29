@@ -5,9 +5,15 @@ use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation}
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::Arc;
-use worker::Env;
+use worker::{query, Env};
 
-use crate::{auth::Claims, db, error::AppError, models::user::User};
+use crate::{
+    auth::Claims,
+    crypto::{generate_salt, hash_password_for_storage, verify_password},
+    db,
+    error::AppError,
+    models::user::User,
+};
 
 #[derive(Debug, Deserialize)]
 pub struct TokenRequest {
@@ -126,21 +132,63 @@ pub async fn token(
                 .password
                 .ok_or_else(|| AppError::BadRequest("Missing password".to_string()))?;
 
-            let user: Value = db
+            let user_value: Value = db
                 .prepare("SELECT * FROM users WHERE email = ?1")
                 .bind(&[username.to_lowercase().into()])?
                 .first(None)
                 .await
                 .map_err(|_| AppError::Unauthorized("Invalid credentials".to_string()))?
                 .ok_or_else(|| AppError::Unauthorized("Invalid credentials".to_string()))?;
-            let user: User = serde_json::from_value(user).map_err(|_| AppError::Internal)?;
-            // Securely compare the provided hash with the stored hash
-            if !constant_time_eq(
-                user.master_password_hash.as_bytes(),
-                password_hash.as_bytes(),
-            ) {
+            let user: User =
+                serde_json::from_value(user_value).map_err(|_| AppError::Internal)?;
+
+            // Check if user needs migration (no salt = legacy user)
+            let is_valid = if let Some(ref salt) = user.password_salt {
+                // New user with PBKDF2 hashed password
+                verify_password(&password_hash, &user.master_password_hash, salt).await?
+            } else {
+                // Legacy user: direct comparison
+                constant_time_eq(
+                    user.master_password_hash.as_bytes(),
+                    password_hash.as_bytes(),
+                )
+            };
+
+            if !is_valid {
                 return Err(AppError::Unauthorized("Invalid credentials".to_string()));
             }
+
+            // Migrate legacy user to PBKDF2 if password matches and no salt exists
+            let user = if user.password_salt.is_none() {
+                // Generate new salt and hash the password
+                let new_salt = generate_salt()?;
+                let new_hash = hash_password_for_storage(&password_hash, &new_salt).await?;
+                let now = Utc::now().to_rfc3339();
+
+                // Update user in database
+                query!(
+                    &db,
+                    "UPDATE users SET master_password_hash = ?1, password_salt = ?2, updated_at = ?3 WHERE id = ?4",
+                    &new_hash,
+                    &new_salt,
+                    &now,
+                    &user.id
+                )
+                .map_err(|_| AppError::Database)?
+                .run()
+                .await
+                .map_err(|_| AppError::Database)?;
+
+                // Return updated user
+                User {
+                    master_password_hash: new_hash,
+                    password_salt: Some(new_salt),
+                    updated_at: now,
+                    ..user
+                }
+            } else {
+                user
+            };
 
             generate_tokens_and_response(user, &env)
         }

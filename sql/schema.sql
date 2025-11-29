@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS users (
     email_verified BOOLEAN NOT NULL DEFAULT 0,
     master_password_hash TEXT NOT NULL,
     master_password_hint TEXT,
+    password_salt TEXT, -- Salt for server-side PBKDF2 hashing (NULL for legacy users pending migration)
     key TEXT NOT NULL, -- The encrypted symmetric key
     private_key TEXT NOT NULL, -- encrypted asymmetric private_key
     public_key TEXT NOT NULL, -- asymmetric public_key

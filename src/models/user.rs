@@ -9,6 +9,7 @@ pub struct User {
     pub email_verified: bool,
     pub master_password_hash: String,
     pub master_password_hint: Option<String>,
+    pub password_salt: Option<String>, // Salt for server-side PBKDF2 (NULL for legacy users)
     pub key: String,
     pub private_key: String,
     pub public_key: String,

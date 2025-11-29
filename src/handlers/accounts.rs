@@ -7,10 +7,11 @@ use uuid::Uuid;
 use worker::{query, Env};
 
 use crate::{
+    auth::Claims,
+    crypto::{generate_salt, hash_password_for_storage, verify_password},
     db,
     error::AppError,
     models::user::{DeleteAccountRequest, PreloginResponse, RegisterRequest, User},
-    auth::Claims,
 };
 
 #[worker::send]
@@ -54,6 +55,12 @@ pub async fn register(
     {
         return Err(AppError::Unauthorized("Not allowed to signup".to_string()));
     }
+
+    // Generate salt and hash the password with server-side PBKDF2
+    let password_salt = generate_salt()?;
+    let hashed_password =
+        hash_password_for_storage(&payload.master_password_hash, &password_salt).await?;
+
     let db = db::get_db(&env)?;
     let now = Utc::now().to_rfc3339();
     let user = User {
@@ -61,8 +68,9 @@ pub async fn register(
         name: payload.name,
         email: payload.email.to_lowercase(),
         email_verified: false,
-        master_password_hash: payload.master_password_hash,
+        master_password_hash: hashed_password,
         master_password_hint: payload.master_password_hint,
+        password_salt: Some(password_salt),
         key: payload.user_symmetric_key,
         private_key: payload.user_asymmetric_keys.encrypted_private_key,
         public_key: payload.user_asymmetric_keys.public_key,
@@ -73,14 +81,15 @@ pub async fn register(
         updated_at: now,
     };
 
-    let query = query!(
+    query!(
         &db,
-        "INSERT INTO users (id, name, email, master_password_hash, key, private_key, public_key, kdf_iterations, security_stamp, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+        "INSERT INTO users (id, name, email, master_password_hash, password_salt, key, private_key, public_key, kdf_iterations, security_stamp, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
          user.id,
          user.name,
          user.email,
          user.master_password_hash,
+         user.password_salt,
          user.key,
          user.private_key,
          user.public_key,
@@ -88,12 +97,12 @@ pub async fn register(
          user.security_stamp,
          user.created_at,
          user.updated_at
-    ).map_err(|error|{
+    ).map_err(|_|{
         AppError::Database
     })?
     .run()
     .await
-    .map_err(|error|{
+    .map_err(|_|{
         AppError::Database
     })?;
 
@@ -149,44 +158,42 @@ pub async fn delete_account(
     let user: User = serde_json::from_value(user).map_err(|_| AppError::Internal)?;
 
     // Verify the master password hash
-    let provided_hash = payload.master_password_hash
+    let provided_hash = payload
+        .master_password_hash
         .ok_or_else(|| AppError::BadRequest("Missing master password hash".to_string()))?;
-    if !constant_time_eq(
-        user.master_password_hash.as_bytes(),
-        provided_hash.as_bytes(),
-    ) {
+
+    let is_valid = if let Some(ref salt) = user.password_salt {
+        // New user with PBKDF2 hashed password
+        verify_password(&provided_hash, &user.master_password_hash, salt).await?
+    } else {
+        // Legacy user: direct comparison (migration happens at login, not delete)
+        constant_time_eq(
+            user.master_password_hash.as_bytes(),
+            provided_hash.as_bytes(),
+        )
+    };
+
+    if !is_valid {
         return Err(AppError::Unauthorized("Invalid password".to_string()));
     }
 
     // Delete all user's ciphers
-    query!(
-        &db,
-        "DELETE FROM ciphers WHERE user_id = ?1",
-        user_id
-    )
-    .map_err(|_| AppError::Database)?
-    .run()
-    .await?;
+    query!(&db, "DELETE FROM ciphers WHERE user_id = ?1", user_id)
+        .map_err(|_| AppError::Database)?
+        .run()
+        .await?;
 
     // Delete all user's folders
-    query!(
-        &db,
-        "DELETE FROM folders WHERE user_id = ?1",
-        user_id
-    )
-    .map_err(|_| AppError::Database)?
-    .run()
-    .await?;
+    query!(&db, "DELETE FROM folders WHERE user_id = ?1", user_id)
+        .map_err(|_| AppError::Database)?
+        .run()
+        .await?;
 
     // Delete the user
-    query!(
-        &db,
-        "DELETE FROM users WHERE id = ?1",
-        user_id
-    )
-    .map_err(|_| AppError::Database)?
-    .run()
-    .await?;
+    query!(&db, "DELETE FROM users WHERE id = ?1", user_id)
+        .map_err(|_| AppError::Database)?
+        .run()
+        .await?;
 
     Ok(Json(json!({})))
 }
