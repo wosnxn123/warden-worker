@@ -43,7 +43,7 @@ jobs:
                     echo "❌ Error: Could not find database with D1_DATABASE_ID secret"
                     exit 1
                   fi
-                  echo "Found database name: $DB_NAME"
+                  echo "Found database name
                   echo "db_name=$DB_NAME" >> $GITHUB_OUTPUT
 
             - name: Export D1 Database
@@ -158,7 +158,7 @@ jobs:
                     echo "❌ Error: Could not find database with D1_DATABASE_ID_DEV secret
                     exit 1
                   fi
-                  echo "Found database name: $DB_NAME"
+                  echo "Found database name
                   echo "db_name=$DB_NAME" >> $GITHUB_OUTPUT
 
             - name: Export D1 Database (Dev)

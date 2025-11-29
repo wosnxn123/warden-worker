@@ -245,6 +245,31 @@ To restore your D1 database from a backup:
 
     > **Note:** The `--remote` flag is required to execute against your production D1 database. Without it, the command will run against the local development database. 
 
+#### D1 Time Travel (Point-in-Time Recovery)
+
+Cloudflare D1 provides a built-in Time Travel feature that allows you to restore your database to any point within the last 30 days. This is useful for undoing accidental data modifications or deletions without needing a backup.
+
+To use Time Travel:
+
+1.  **Check current restore bookmark:**
+
+    ```bash
+    # Replace DATABASE_NAME with your actual database name (e.g., warden-db)
+    wrangler d1 time-travel info DATABASE_NAME
+    ```
+
+2.  **Restore to a specific timestamp:**
+
+    ```bash
+    # Restore to a specific point in time (ISO 8601 format)
+    wrangler d1 time-travel restore DATABASE_NAME --timestamp=2024-01-15T12:00:00Z
+    
+    # Or restore to a specific bookmark
+    wrangler d1 time-travel restore DATABASE_NAME --bookmark=<bookmark_id>
+    ```
+
+> **Note:** Time Travel retains data for 30 days on the free tier. See [Cloudflare D1 Time Travel documentation](https://developers.cloudflare.com/d1/reference/time-travel/) for more details.
+
 ### Local Development with D1
 
 You can run this Worker locally with full D1 database support using Wrangler. This is useful for development, testing, or as a temporary fallback when Cloudflare services are unavailable.
