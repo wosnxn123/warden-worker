@@ -100,6 +100,47 @@ There are no immediate plans to implement these features. The primary goal of th
 
     In your Bitwarden client, go to the self-hosted login screen and enter the URL of your deployed worker (e.g., `https://warden-worker.your-username.workers.dev`).
 
+### CI/CD Deployment with GitHub Actions
+
+This project includes GitHub Actions workflows for automated deployment. This is the recommended approach for production environments as it ensures consistent builds and deployments.
+
+#### Required Secrets
+
+Add the following secrets to your GitHub repository (`Settings > Secrets and variables > Actions`):
+
+| Secret | Required | Description |
+|--------|----------|-------------|
+| `CLOUDFLARE_API_TOKEN` | yes | Your Cloudflare API token |
+| `CLOUDFLARE_ACCOUNT_ID` | yes | Your Cloudflare account ID |
+| `D1_DATABASE_ID` | yes | Your production D1 database ID |
+
+> ⚠️ **Important:** The `CLOUDFLARE_API_TOKEN` must have **both** Worker and D1 permissions:
+> - **Edit Cloudflare Workers** - Required for deploying the Worker
+> - **Edit D1** - Required for database migrations and backups
+> 
+> When creating the API token in Cloudflare Dashboard, make sure to add both permissions under "Account" → "Cloudflare Workers" and "Account" → "D1".
+
+#### How to Get Your Cloudflare Account ID
+
+1. Log in to the [Cloudflare Dashboard](https://dash.cloudflare.com/)
+2. Select your account
+3. Your Account ID is displayed in the right sidebar of the Overview page, or in the URL: `https://dash.cloudflare.com/<account-id>`
+
+#### Usage
+
+1.  **Fork or clone the repository** to your GitHub account
+
+2.  **Configure the required secrets** in your repository settings
+
+3.  **Manually trigger the `Build` Action** from the GitHub Actions tab in your repository
+
+4.  **Monitor the deployment** in the Actions tab of your repository
+
+5.  **Set environment variables** in the Cloudflare console (following the command line deployment steps):
+    - `ALLOWED_EMAILS` your-email@example.com
+    - `JWT_SECRET` a long random string
+    - `JWT_REFRESH_SECRET` a long random string
+
 ## Configuration
 
 This project requires minimal configuration. The main configuration is done in the `wrangler.toml` file, where you specify your D1 database binding.
@@ -134,6 +175,8 @@ The worker includes a scheduled task that runs automatically to clean up soft-de
 You can modify the cron schedule in `wrangler.toml` if you want to run the cleanup task at a different time or frequency. See [Cloudflare Cron Triggers documentation](https://developers.cloudflare.com/workers/configuration/cron-triggers/) for cron expression syntax.
 
 ### Database Backup (GitHub Actions)
+
+> ⚠️ **Note:** To use this backup feature, you must fork this repository and configure the same three required secrets as described in the [CI/CD Deployment ](#cicd-deployment-with-github-actions) section in advance: `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, and `D1_DATABASE_ID`.
 
 This project includes a GitHub Action workflow that automatically backs up your D1 database to S3-compatible storage daily. The backup runs at 04:00 UTC (1 hour after the cleanup task).
 
@@ -244,6 +287,22 @@ To restore your D1 database from a backup:
     ```
 
     > **Note:** The `--remote` flag is required to execute against your production D1 database. Without it, the command will run against the local development database. 
+
+    > ⚠️ **Troubleshooting: `no such table: main.users` error**
+    > 
+    > If you encounter this error when importing, it's because `wrangler d1 export` may output tables in an order that doesn't respect foreign key dependencies (e.g., `folders` table is created before `users` table, but `folders` has a foreign key referencing `users`).
+    > 
+    > **Solution:** Add `PRAGMA foreign_keys=OFF;` at the beginning of your backup.sql file to disable foreign key checks during import:
+    > 
+    > ```bash
+    > # Prepend the PRAGMA statement to your backup file
+    > echo -e "PRAGMA foreign_keys=OFF;\n$(cat backup.sql)" > backup.sql
+    > 
+    > # Then import as usual
+    > wrangler d1 execute DATABASE_NAME --remote --file=backup.sql
+    > ```
+    > 
+    > Alternatively, you can manually reorder the SQL statements in the backup file to ensure parent tables (`users`) are created before child tables (`folders`, `ciphers`).
 
 #### D1 Time Travel (Point-in-Time Recovery)
 
