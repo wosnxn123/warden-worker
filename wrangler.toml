@@ -24,6 +24,7 @@ crons = ["0 3 * * *"]
 binding = "vault1"
 database_name = "vault1"
 database_id = "${D1_DATABASE_ID}"
+migrations_dir = "migrations"
 
 [env.dev]
 name = "warden-worker-dev"
@@ -37,3 +38,4 @@ crons = ["0 3 * * *"]
 binding = "vault1"
 database_name = "vault1-dev" 
 database_id = "${D1_DATABASE_ID_DEV}"
+migrations_dir = "migrations"

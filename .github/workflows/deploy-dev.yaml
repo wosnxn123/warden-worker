@@ -29,6 +29,61 @@ jobs:
             - name: Replace D1_DATABASE_ID_DEV in wrangler.toml
               run: sed -i "s/\${D1_DATABASE_ID_DEV}/${{ secrets.D1_DATABASE_ID_DEV }}/g" wrangler.toml
 
+            - name: Apply D1 database migrations (dev)
+              env:
+                  CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+                  CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+              run: |
+                  set -o pipefail  # Ensure pipe returns first non-zero exit code
+                  
+                  # Apply migrations with retry loop to handle legacy ensure_schema columns
+                  MAX_RETRIES=10
+                  RETRY_COUNT=0
+                  
+                  while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+                    echo "🔄 Attempting to apply migrations (attempt $((RETRY_COUNT + 1))/$MAX_RETRIES)..."
+                    
+                    if npx wrangler d1 migrations apply vault1 --env dev --remote 2>&1 | tee migration_output.txt; then
+                      echo "✅ All migrations applied successfully"
+                      exit 0
+                    fi
+                    
+                    # Check if failure is due to duplicate column (from legacy ensure_schema)
+                    if grep -q "duplicate column name" migration_output.txt; then
+                      # Extract the migration name that failed
+                      # Format: "Migration 0001_add_password_salt.sql failed with the following errors:"
+                      FAILED_MIGRATION=$(grep -oP "Migration \K[0-9]+_[a-zA-Z0-9_]+\.sql(?= failed)" migration_output.txt)
+                      if [ -z "$FAILED_MIGRATION" ]; then
+                        echo "❌ Detected duplicate column error, but could not identify the migration filename from output."
+                        cat migration_output.txt
+                        exit 1
+                      fi
+                      
+                      echo "⚠️ Migration '$FAILED_MIGRATION' failed: column already exists"
+                      echo "📝 Marking migration as applied..."
+                      
+                      # Initialize d1_migrations table and mark this migration as applied
+                      npx wrangler d1 execute vault1 --env dev --remote --command "
+                        CREATE TABLE IF NOT EXISTS d1_migrations (
+                          id INTEGER PRIMARY KEY AUTOINCREMENT,
+                          name TEXT UNIQUE NOT NULL,
+                          applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
+                        );
+                        INSERT OR IGNORE INTO d1_migrations (name) VALUES ('$FAILED_MIGRATION');
+                      "
+                      
+                      RETRY_COUNT=$((RETRY_COUNT + 1))
+                      echo "🔁 Retrying remaining migrations..."
+                    else
+                      echo "❌ Migration failed with unexpected error:"
+                      cat migration_output.txt
+                      exit 1
+                    fi
+                  done
+                  
+                  echo "❌ Max retries ($MAX_RETRIES) exceeded"
+                  exit 1
+
             - uses: cloudflare/wrangler-action@v3
               id: cf
               env:
