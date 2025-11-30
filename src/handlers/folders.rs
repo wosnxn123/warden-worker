@@ -5,7 +5,7 @@ use uuid::Uuid;
 use worker::{query, Env};
 
 use crate::auth::Claims;
-use crate::db;
+use crate::db::{self, touch_user_updated_at};
 use crate::error::AppError;
 use crate::models::folder::{CreateFolderRequest, Folder, FolderResponse};
 use axum::extract::Path;
@@ -41,6 +41,8 @@ pub async fn create_folder(
     .run()
     .await?;
 
+    touch_user_updated_at(&db, &claims.sub).await?;
+
     let response = FolderResponse {
         id: folder.id,
         name: folder.name,
@@ -68,6 +70,8 @@ pub async fn delete_folder(
     .map_err(|_| AppError::Database)?
     .run()
     .await?;
+
+    touch_user_updated_at(&db, &claims.sub).await?;
 
     Ok(Json(()))
 }
@@ -112,6 +116,8 @@ pub async fn update_folder(
     .map_err(|_| AppError::Database)?
     .run()
     .await?;
+
+    touch_user_updated_at(&db, &claims.sub).await?;
 
     let response = FolderResponse {
         id: folder.id,

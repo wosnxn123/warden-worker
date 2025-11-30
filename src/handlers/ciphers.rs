@@ -79,6 +79,8 @@ pub async fn create_cipher(
     .run()
     .await?;
 
+    db::touch_user_updated_at(&db, &claims.sub).await?;
+
     Ok(Json(cipher))
 }
 
@@ -155,6 +157,8 @@ pub async fn update_cipher(
     .run()
     .await?;
 
+    db::touch_user_updated_at(&db, &claims.sub).await?;
+
     Ok(Json(cipher))
 }
 
@@ -187,6 +191,8 @@ pub async fn soft_delete_cipher(
     .run()
     .await?;
 
+    db::touch_user_updated_at(&db, &claims.sub).await?;
+
     Ok(Json(()))
 }
 
@@ -217,6 +223,8 @@ pub async fn soft_delete_ciphers_bulk(
 
     db::execute_in_batches(&db, statements, batch_size).await?;
 
+    db::touch_user_updated_at(&db, &claims.sub).await?;
+
     Ok(Json(()))
 }
 
@@ -239,6 +247,8 @@ pub async fn hard_delete_cipher(
     .map_err(|_| AppError::Database)?
     .run()
     .await?;
+
+    db::touch_user_updated_at(&db, &claims.sub).await?;
 
     Ok(Json(()))
 }
@@ -267,6 +277,8 @@ pub async fn hard_delete_ciphers_bulk(
     }
 
     db::execute_in_batches(&db, statements, batch_size).await?;
+
+    db::touch_user_updated_at(&db, &claims.sub).await?;
 
     Ok(Json(()))
 }
@@ -305,6 +317,8 @@ pub async fn restore_cipher(
     .first(None)
     .await?
     .ok_or(AppError::NotFound("Cipher not found".to_string()))?;
+
+    db::touch_user_updated_at(&db, &claims.sub).await?;
 
     Ok(Json(cipher_db.into()))
 }
@@ -363,6 +377,8 @@ pub async fn restore_ciphers_bulk(
             restored_ciphers.push(cipher.into());
         }
     }
+
+    db::touch_user_updated_at(&db, &claims.sub).await?;
 
     Ok(Json(BulkRestoreResponse {
         data: restored_ciphers,
@@ -434,6 +450,8 @@ pub async fn create_cipher_simple(
     ).map_err(|_| AppError::Database)?
     .run()
     .await?;
+
+    db::touch_user_updated_at(&db, &claims.sub).await?;
 
     Ok(Json(cipher))
 }

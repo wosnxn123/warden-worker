@@ -5,7 +5,7 @@ use uuid::Uuid;
 use worker::{query, D1PreparedStatement, Env};
 
 use crate::auth::Claims;
-use crate::db;
+use crate::db::{self, touch_user_updated_at};
 use crate::error::AppError;
 use crate::models::cipher::{Cipher, CipherData};
 use crate::models::folder::Folder;
@@ -124,6 +124,8 @@ pub async fn import_data(
 
     // Execute cipher inserts in batches
     db::execute_in_batches(&db, cipher_statements, batch_size).await?;
+
+    touch_user_updated_at(&db, &claims.sub).await?;
 
     Ok(Json(()))
 }
