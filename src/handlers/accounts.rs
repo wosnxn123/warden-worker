@@ -302,8 +302,13 @@ pub async fn post_rotatekey(
         .filter(|c| c.organization_id.is_none())
         .map(|c| c.id.clone())
         .collect();
-    let request_folder_ids: Vec<String> =
-        payload.account_data.folders.iter().map(|f| f.id.clone()).collect();
+    // Filter out null folder IDs (Bitwarden client bug: https://github.com/bitwarden/clients/issues/8453)
+    let request_folder_ids: Vec<String> = payload
+        .account_data
+        .folders
+        .iter()
+        .filter_map(|f| f.id.clone())
+        .collect();
 
     let cipher_ids_json =
         serde_json::to_string(&request_cipher_ids).map_err(|_| AppError::Internal)?;
@@ -371,15 +376,20 @@ pub async fn post_rotatekey(
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
 
     // Update all folders with new encrypted names (batch operation)
+    // Skip null folder IDs (Bitwarden client bug: https://github.com/bitwarden/clients/issues/8453)
     let mut folder_statements: Vec<D1PreparedStatement> =
         Vec::with_capacity(payload.account_data.folders.len());
     for folder in &payload.account_data.folders {
+        // Skip null folder id entries
+        let Some(folder_id) = &folder.id else {
+            continue;
+        };
         let stmt = query!(
             &db,
             "UPDATE folders SET name = ?1, updated_at = ?2 WHERE id = ?3 AND user_id = ?4",
             folder.name,
             now,
-            folder.id,
+            folder_id,
             user_id
         )
         .map_err(|_| AppError::Database)?;
