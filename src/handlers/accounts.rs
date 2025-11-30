@@ -285,8 +285,85 @@ pub async fn post_rotatekey(
     // Validate that email and kdf settings match
     let unlock_data = &payload.account_unlock_data.master_password_unlock_data;
     if user.email != unlock_data.email {
+        log::error!("Email mismatch in rotation request: {:?} != {:?}", user.email, unlock_data.email);
         return Err(AppError::BadRequest(
             "Email mismatch in rotation request".to_string(),
+        ));
+    }
+
+    // Validate data integrity using D1 batch operations
+    // Step 1: Count check - ensure request has exactly the same number of items
+    // Step 2: EXCEPT check - ensure request has exactly the same IDs
+    let request_cipher_ids: Vec<String> = payload
+        .account_data
+        .ciphers
+        .iter()
+        .filter(|c| c.organization_id.is_none())
+        .map(|c| c.id.clone())
+        .collect();
+    let request_folder_ids: Vec<String> =
+        payload.account_data.folders.iter().map(|f| f.id.clone()).collect();
+
+    let cipher_ids_json =
+        serde_json::to_string(&request_cipher_ids).map_err(|_| AppError::Internal)?;
+    let folder_ids_json =
+        serde_json::to_string(&request_folder_ids).map_err(|_| AppError::Internal)?;
+
+    // Batch: 2 COUNT queries + 2 EXCEPT queries
+    let validation_results = db
+        .batch(vec![
+            // Count ciphers in DB
+            db.prepare(
+                "SELECT COUNT(*) AS cnt FROM ciphers WHERE user_id = ?1 AND organization_id IS NULL",
+            )
+            .bind(&[user_id.clone().into()])?,
+            // Count folders in DB
+            db.prepare("SELECT COUNT(*) AS cnt FROM folders WHERE user_id = ?1")
+                .bind(&[user_id.clone().into()])?,
+            // DB cipher IDs EXCEPT request cipher IDs (finds missing)
+            db.prepare(
+                "SELECT id FROM ciphers WHERE user_id = ?1 AND organization_id IS NULL
+                 EXCEPT
+                 SELECT value FROM json_each(?2) LIMIT 1",
+            )
+            .bind(&[user_id.clone().into(), cipher_ids_json.into()])?,
+            // DB folder IDs EXCEPT request folder IDs (finds missing)
+            db.prepare(
+                "SELECT id FROM folders WHERE user_id = ?1
+                 EXCEPT
+                 SELECT value FROM json_each(?2) LIMIT 1",
+            )
+            .bind(&[user_id.clone().into(), folder_ids_json.into()])?,
+        ])
+        .await?;
+
+    // Check counts match
+    let db_cipher_count = validation_results[0]
+        .results::<Value>()?
+        .first()
+        .and_then(|v| v.get("cnt")?.as_i64())
+        .unwrap_or(0) as usize;
+    let db_folder_count = validation_results[1]
+        .results::<Value>()?
+        .first()
+        .and_then(|v| v.get("cnt")?.as_i64())
+        .unwrap_or(0) as usize;
+
+    if db_cipher_count != request_cipher_ids.len() || db_folder_count != request_folder_ids.len() {
+        log::error!("Cipher or folder count mismatch in rotation request: {:?} != {:?} or {:?} != {:?}", db_cipher_count, request_cipher_ids.len(), db_folder_count, request_folder_ids.len());
+        return Err(AppError::BadRequest(
+            "All existing ciphers and folders must be included in the rotation".to_string(),
+        ));
+    }
+
+    // Check EXCEPT results (if count matches but IDs differ)
+    let has_missing_ciphers = !validation_results[2].results::<Value>()?.is_empty();
+    let has_missing_folders = !validation_results[3].results::<Value>()?.is_empty();
+
+    if has_missing_ciphers || has_missing_folders {
+        log::error!("Missing ciphers or folders in rotation request: {:?} or {:?}", has_missing_ciphers, has_missing_folders);
+        return Err(AppError::BadRequest(
+            "All existing ciphers and folders must be included in the rotation".to_string(),
         ));
     }
 
