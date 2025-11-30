@@ -1,4 +1,7 @@
+use constant_time_eq::constant_time_eq;
 use serde::{Deserialize, Serialize};
+
+use crate::{crypto::verify_password, error::AppError};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct User {
@@ -18,6 +21,53 @@ pub struct User {
     pub security_stamp: String,
     pub created_at: String,
     pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PasswordVerification {
+    MatchCurrentScheme,
+    MatchLegacyScheme,
+    Mismatch,
+}
+
+impl PasswordVerification {
+    pub fn is_valid(&self) -> bool {
+        matches!(
+            self,
+            PasswordVerification::MatchCurrentScheme | PasswordVerification::MatchLegacyScheme
+        )
+    }
+
+    pub fn needs_migration(&self) -> bool {
+        matches!(self, PasswordVerification::MatchLegacyScheme)
+    }
+}
+
+impl User {
+    pub async fn verify_master_password(
+        &self,
+        provided_hash: &str,
+    ) -> Result<PasswordVerification, AppError> {
+        if let Some(ref salt) = self.password_salt {
+            let is_valid = verify_password(provided_hash, &self.master_password_hash, salt).await?;
+            Ok(if is_valid {
+                PasswordVerification::MatchCurrentScheme
+            } else {
+                PasswordVerification::Mismatch
+            })
+        } else {
+            let is_valid = constant_time_eq(
+                self.master_password_hash.as_bytes(),
+                provided_hash.as_bytes(),
+            );
+
+            Ok(if is_valid {
+                PasswordVerification::MatchLegacyScheme
+            } else {
+                PasswordVerification::Mismatch
+            })
+        }
+    }
 }
 
 mod bool_from_int {
@@ -83,4 +133,96 @@ pub struct DeleteAccountRequest {
     #[serde(alias = "MasterPasswordHash")]
     pub master_password_hash: Option<String>,
     pub otp: Option<String>,
+}
+
+// For POST /accounts/password request
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChangePasswordRequest {
+    pub master_password_hash: String,
+    pub new_master_password_hash: String,
+    pub master_password_hint: Option<String>,
+    pub key: String,
+}
+
+// For POST /accounts/key-management/rotate-user-account-keys request
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RotateKeyRequest {
+    pub account_unlock_data: RotateAccountUnlockData,
+    pub account_keys: RotateAccountKeys,
+    pub account_data: RotateAccountData,
+    pub old_master_key_authentication_hash: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RotateAccountUnlockData {
+    pub master_password_unlock_data: MasterPasswordUnlockData,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MasterPasswordUnlockData {
+    pub kdf_type: i32,
+    pub kdf_iterations: i32,
+    pub kdf_parallelism: Option<i32>,
+    pub kdf_memory: Option<i32>,
+    pub email: String,
+    pub master_key_authentication_hash: String,
+    pub master_key_encrypted_user_key: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RotateAccountKeys {
+    pub user_key_encrypted_account_private_key: String,
+    pub account_public_key: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RotateAccountData {
+    pub ciphers: Vec<RotateCipherData>,
+    pub folders: Vec<RotateFolderData>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RotateCipherData {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub r#type: i32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub folder_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub organization_id: Option<String>,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub notes: Option<String>,
+    #[serde(default)]
+    pub favorite: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub login: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub card: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub identity: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub secure_note: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fields: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub password_history: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reprompt: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RotateFolderData {
+    pub id: String,
+    pub name: String,
 }

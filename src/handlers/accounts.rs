@@ -1,17 +1,23 @@
 use axum::{extract::State, Json};
 use chrono::Utc;
-use constant_time_eq::constant_time_eq;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use uuid::Uuid;
-use worker::{query, Env};
+use worker::{query, D1PreparedStatement, Env};
 
+use super::get_batch_size;
 use crate::{
     auth::Claims,
-    crypto::{generate_salt, hash_password_for_storage, verify_password},
+    crypto::{generate_salt, hash_password_for_storage},
     db,
     error::AppError,
-    models::user::{DeleteAccountRequest, PreloginResponse, RegisterRequest, User},
+    models::{
+        cipher::CipherData,
+        user::{
+            ChangePasswordRequest, DeleteAccountRequest, PreloginResponse, RegisterRequest,
+            RotateKeyRequest, User,
+        },
+    },
 };
 
 #[worker::send]
@@ -119,22 +125,22 @@ pub async fn revision_date(
     claims: Claims,
     State(env): State<Arc<Env>>,
 ) -> Result<Json<i64>, AppError> {
-    let db = db::get_db(&env)? ;
-    
+    let db = db::get_db(&env)?;
+
     // get the user's updated_at timestamp
     let updated_at: Option<String> = db
         .prepare("SELECT updated_at FROM users WHERE id = ?1")
-        .bind(&[claims.sub. into()])?
+        .bind(&[claims.sub.into()])?
         .first(Some("updated_at"))
         .await
         .map_err(|_| AppError::Database)?;
-        
+
     // convert the timestamp to a millisecond-level Unix timestamp
     let revision_date = updated_at
-        .and_then(|ts| chrono::DateTime::parse_from_rfc3339(&ts). ok())
-        . map(|dt| dt.timestamp_millis())
+        .and_then(|ts| chrono::DateTime::parse_from_rfc3339(&ts).ok())
+        .map(|dt| dt.timestamp_millis())
         .unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
-    
+
     Ok(Json(revision_date))
 }
 
@@ -162,18 +168,9 @@ pub async fn delete_account(
         .master_password_hash
         .ok_or_else(|| AppError::BadRequest("Missing master password hash".to_string()))?;
 
-    let is_valid = if let Some(ref salt) = user.password_salt {
-        // New user with PBKDF2 hashed password
-        verify_password(&provided_hash, &user.master_password_hash, salt).await?
-    } else {
-        // Legacy user: direct comparison (migration happens at login, not delete)
-        constant_time_eq(
-            user.master_password_hash.as_bytes(),
-            provided_hash.as_bytes(),
-        )
-    };
+    let verification = user.verify_master_password(&provided_hash).await?;
 
-    if !is_valid {
+    if !verification.is_valid() {
         return Err(AppError::Unauthorized("Invalid password".to_string()));
     }
 
@@ -194,6 +191,186 @@ pub async fn delete_account(
         .map_err(|_| AppError::Database)?
         .run()
         .await?;
+
+    Ok(Json(json!({})))
+}
+
+/// POST /accounts/password - Change master password
+#[worker::send]
+pub async fn post_password(
+    claims: Claims,
+    State(env): State<Arc<Env>>,
+    Json(payload): Json<ChangePasswordRequest>,
+) -> Result<Json<Value>, AppError> {
+    let db = db::get_db(&env)?;
+    let user_id = &claims.sub;
+
+    // Get the user from the database
+    let user: Value = db
+        .prepare("SELECT * FROM users WHERE id = ?1")
+        .bind(&[user_id.clone().into()])?
+        .first(None)
+        .await
+        .map_err(|_| AppError::Database)?
+        .ok_or_else(|| AppError::NotFound("User not found".to_string()))?;
+    let user: User = serde_json::from_value(user).map_err(|_| AppError::Internal)?;
+
+    // Verify the current master password
+    let verification = user
+        .verify_master_password(&payload.master_password_hash)
+        .await?;
+
+    if !verification.is_valid() {
+        return Err(AppError::Unauthorized("Invalid password".to_string()));
+    }
+
+    // Generate new salt and hash the new password
+    let new_salt = generate_salt()?;
+    let new_hashed_password =
+        hash_password_for_storage(&payload.new_master_password_hash, &new_salt).await?;
+
+    // Generate new security stamp and update timestamp
+    let new_security_stamp = Uuid::new_v4().to_string();
+    let now = Utc::now().to_rfc3339();
+
+    // Update user record
+    query!(
+        &db,
+        "UPDATE users SET master_password_hash = ?1, password_salt = ?2, key = ?3, master_password_hint = ?4, security_stamp = ?5, updated_at = ?6 WHERE id = ?7",
+        new_hashed_password,
+        new_salt,
+        payload.key,
+        payload.master_password_hint,
+        new_security_stamp,
+        now,
+        user_id
+    )
+    .map_err(|_| AppError::Database)?
+    .run()
+    .await?;
+
+    Ok(Json(json!({})))
+}
+
+/// POST /accounts/key-management/rotate-user-account-keys - Rotate user encryption keys
+#[worker::send]
+pub async fn post_rotatekey(
+    claims: Claims,
+    State(env): State<Arc<Env>>,
+    Json(payload): Json<RotateKeyRequest>,
+) -> Result<Json<Value>, AppError> {
+    let db = db::get_db(&env)?;
+    let user_id = &claims.sub;
+    let batch_size = get_batch_size(&env);
+
+    // Get the user from the database
+    let user: Value = db
+        .prepare("SELECT * FROM users WHERE id = ?1")
+        .bind(&[user_id.clone().into()])?
+        .first(None)
+        .await
+        .map_err(|_| AppError::Database)?
+        .ok_or_else(|| AppError::NotFound("User not found".to_string()))?;
+    let user: User = serde_json::from_value(user).map_err(|_| AppError::Internal)?;
+
+    // Verify the current master password
+    let verification = user
+        .verify_master_password(&payload.old_master_key_authentication_hash)
+        .await?;
+
+    if !verification.is_valid() {
+        return Err(AppError::Unauthorized("Invalid password".to_string()));
+    }
+
+    // Validate that email and kdf settings match
+    let unlock_data = &payload.account_unlock_data.master_password_unlock_data;
+    if user.email != unlock_data.email {
+        return Err(AppError::BadRequest(
+            "Email mismatch in rotation request".to_string(),
+        ));
+    }
+
+    let now = Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
+
+    // Update all folders with new encrypted names (batch operation)
+    let mut folder_statements: Vec<D1PreparedStatement> =
+        Vec::with_capacity(payload.account_data.folders.len());
+    for folder in &payload.account_data.folders {
+        let stmt = query!(
+            &db,
+            "UPDATE folders SET name = ?1, updated_at = ?2 WHERE id = ?3 AND user_id = ?4",
+            folder.name,
+            now,
+            folder.id,
+            user_id
+        )
+        .map_err(|_| AppError::Database)?;
+        folder_statements.push(stmt);
+    }
+    db::execute_in_batches(&db, folder_statements, batch_size).await?;
+
+    // Update all ciphers with new encrypted data (batch operation)
+    // Only update personal ciphers (organization_id is None)
+    let mut cipher_statements: Vec<D1PreparedStatement> =
+        Vec::with_capacity(payload.account_data.ciphers.len());
+    for cipher in &payload.account_data.ciphers {
+        // Skip organization ciphers
+        if cipher.organization_id.is_some() {
+            continue;
+        }
+
+        let cipher_data = CipherData {
+            name: cipher.name.clone(),
+            notes: cipher.notes.clone(),
+            login: cipher.login.clone(),
+            card: cipher.card.clone(),
+            identity: cipher.identity.clone(),
+            secure_note: cipher.secure_note.clone(),
+            fields: cipher.fields.clone(),
+            password_history: cipher.password_history.clone(),
+            reprompt: cipher.reprompt,
+        };
+
+        let data = serde_json::to_string(&cipher_data).map_err(|_| AppError::Internal)?;
+
+        let stmt = query!(
+            &db,
+            "UPDATE ciphers SET data = ?1, folder_id = ?2, favorite = ?3, updated_at = ?4 WHERE id = ?5 AND user_id = ?6",
+            data,
+            cipher.folder_id,
+            cipher.favorite,
+            now,
+            cipher.id,
+            user_id
+        )
+        .map_err(|_| AppError::Database)?;
+        cipher_statements.push(stmt);
+    }
+    db::execute_in_batches(&db, cipher_statements, batch_size).await?;
+
+    // Generate new salt and hash the new password
+    let new_salt = generate_salt()?;
+    let new_hashed_password =
+        hash_password_for_storage(&unlock_data.master_key_authentication_hash, &new_salt).await?;
+
+    // Generate new security stamp
+    let new_security_stamp = Uuid::new_v4().to_string();
+
+    // Update user record with new keys and password
+    query!(
+        &db,
+        "UPDATE users SET master_password_hash = ?1, password_salt = ?2, key = ?3, private_key = ?4, security_stamp = ?5, updated_at = ?6 WHERE id = ?7",
+        new_hashed_password,
+        new_salt,
+        unlock_data.master_key_encrypted_user_key,
+        payload.account_keys.user_key_encrypted_account_private_key,
+        new_security_stamp,
+        now,
+        user_id
+    )
+    .map_err(|_| AppError::Database)?
+    .run()
+    .await?;
 
     Ok(Json(json!({})))
 }

@@ -1,6 +1,5 @@
 use axum::{extract::State, Form, Json};
 use chrono::{Duration, Utc};
-use constant_time_eq::constant_time_eq;
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -9,7 +8,7 @@ use worker::{query, Env};
 
 use crate::{
     auth::Claims,
-    crypto::{generate_salt, hash_password_for_storage, verify_password},
+    crypto::{generate_salt, hash_password_for_storage},
     db,
     error::AppError,
     models::user::User,
@@ -139,27 +138,16 @@ pub async fn token(
                 .await
                 .map_err(|_| AppError::Unauthorized("Invalid credentials".to_string()))?
                 .ok_or_else(|| AppError::Unauthorized("Invalid credentials".to_string()))?;
-            let user: User =
-                serde_json::from_value(user_value).map_err(|_| AppError::Internal)?;
+            let user: User = serde_json::from_value(user_value).map_err(|_| AppError::Internal)?;
 
-            // Check if user needs migration (no salt = legacy user)
-            let is_valid = if let Some(ref salt) = user.password_salt {
-                // New user with PBKDF2 hashed password
-                verify_password(&password_hash, &user.master_password_hash, salt).await?
-            } else {
-                // Legacy user: direct comparison
-                constant_time_eq(
-                    user.master_password_hash.as_bytes(),
-                    password_hash.as_bytes(),
-                )
-            };
+            let verification = user.verify_master_password(&password_hash).await?;
 
-            if !is_valid {
+            if !verification.is_valid() {
                 return Err(AppError::Unauthorized("Invalid credentials".to_string()));
             }
 
             // Migrate legacy user to PBKDF2 if password matches and no salt exists
-            let user = if user.password_salt.is_none() {
+            let user = if verification.needs_migration() {
                 // Generate new salt and hash the password
                 let new_salt = generate_salt()?;
                 let new_hash = hash_password_for_storage(&password_hash, &new_salt).await?;
