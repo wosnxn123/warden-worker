@@ -1,11 +1,13 @@
 pub mod accounts;
 pub mod ciphers;
 pub mod config;
-pub mod identity;
-pub mod sync;
+pub mod emergency_access;
 pub mod folders;
+pub mod identity;
 pub mod import;
 pub mod purge;
+pub mod sync;
+pub mod webauth;
 
 /// Shared helper for reading an environment variable into usize.
 pub(crate) fn get_env_usize(env: &worker::Env, var_name: &str, default: usize) -> usize {

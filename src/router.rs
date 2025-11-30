@@ -5,7 +5,7 @@ use axum::{
 use std::sync::Arc;
 use worker::Env;
 
-use crate::handlers::{accounts, ciphers, config, folders, identity, import, sync};
+use crate::handlers::{accounts, ciphers, config, emergency_access, folders, identity, import, sync, webauth};
 
 pub fn api_router(env: Env) -> Router {
     let app_state = Arc::new(env);
@@ -69,5 +69,19 @@ pub fn api_router(env: Env) -> Router {
         .route("/api/folders/{id}", put(folders::update_folder))
         .route("/api/folders/{id}", delete(folders::delete_folder))
         .route("/api/config", get(config::config))
+        // Emergency access (stub - returns empty lists, feature not supported)
+        .route(
+            "/api/emergency-access/trusted",
+            get(emergency_access::get_trusted_contacts),
+        )
+        .route(
+            "/api/emergency-access/granted",
+            get(emergency_access::get_granted_access),
+        )
+        // WebAuthn (stub - prevents 404 errors, passkeys not supported)
+        .route(
+            "/api/webauthn",
+            get(webauth::get_webauthn_credentials),
+        )
         .with_state(app_state)
 }
