@@ -12,27 +12,6 @@ use crate::error::AppError;
 use crate::models::cipher::{Cipher, CipherData, CipherRequestData, CreateCipherRequest};
 use axum::extract::Path;
 
-/// Execute D1 statements in batches, allowing batch_size 0 to run everything at once.
-async fn execute_in_batches(
-    db: &worker::D1Database,
-    statements: Vec<D1PreparedStatement>,
-    batch_size: usize,
-) -> Result<(), AppError> {
-    if statements.is_empty() {
-        return Ok(());
-    }
-
-    if batch_size == 0 {
-        db.batch(statements).await?;
-    } else {
-        for chunk in statements.chunks(batch_size) {
-            db.batch(chunk.to_vec()).await?;
-        }
-    }
-
-    Ok(())
-}
-
 #[worker::send]
 pub async fn create_cipher(
     claims: Claims,
@@ -221,7 +200,7 @@ pub async fn soft_delete_ciphers_bulk(
     let db = db::get_db(&env)?;
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
     let batch_size = get_batch_size(&env);
-    let mut statements = Vec::with_capacity(payload.ids.len());
+    let mut statements: Vec<D1PreparedStatement> = Vec::with_capacity(payload.ids.len());
 
     for id in payload.ids {
         let stmt = query!(
@@ -236,7 +215,7 @@ pub async fn soft_delete_ciphers_bulk(
         statements.push(stmt);
     }
 
-    execute_in_batches(&db, statements, batch_size).await?;
+    db::execute_in_batches(&db, statements, batch_size).await?;
 
     Ok(Json(()))
 }
@@ -273,7 +252,7 @@ pub async fn hard_delete_ciphers_bulk(
 ) -> Result<Json<()>, AppError> {
     let db = db::get_db(&env)?;
     let batch_size = get_batch_size(&env);
-    let mut statements = Vec::with_capacity(payload.ids.len());
+    let mut statements: Vec<D1PreparedStatement> = Vec::with_capacity(payload.ids.len());
 
     for id in payload.ids {
         let stmt = query!(
@@ -287,7 +266,7 @@ pub async fn hard_delete_ciphers_bulk(
         statements.push(stmt);
     }
 
-    execute_in_batches(&db, statements, batch_size).await?;
+    db::execute_in_batches(&db, statements, batch_size).await?;
 
     Ok(Json(()))
 }
@@ -350,7 +329,7 @@ pub async fn restore_ciphers_bulk(
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
     let batch_size = get_batch_size(&env);
     let ids = payload.ids;
-    let mut update_statements = Vec::with_capacity(ids.len());
+    let mut update_statements: Vec<D1PreparedStatement> = Vec::with_capacity(ids.len());
 
     for id in ids.iter() {
         let stmt = query!(
@@ -365,7 +344,7 @@ pub async fn restore_ciphers_bulk(
         update_statements.push(stmt);
     }
 
-    execute_in_batches(&db, update_statements, batch_size).await?;
+    db::execute_in_batches(&db, update_statements, batch_size).await?;
 
     let mut restored_ciphers = Vec::with_capacity(ids.len());
 

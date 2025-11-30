@@ -11,30 +11,7 @@ use crate::models::cipher::{Cipher, CipherData};
 use crate::models::folder::Folder;
 use crate::models::import::ImportRequest;
 
-use super::{get_batch_size};
-
-/// Execute statements in batches. If batch_size is 0, execute all in one batch.
-async fn execute_in_batches(
-    db: &worker::D1Database,
-    statements: Vec<D1PreparedStatement>,
-    batch_size: usize,
-) -> Result<(), AppError> {
-    if statements.is_empty() {
-        return Ok(());
-    }
-
-    if batch_size == 0 {
-        // Execute all statements in one batch
-        db.batch(statements).await?;
-    } else {
-        // Execute in chunks of batch_size
-        for chunk in statements.chunks(batch_size) {
-            db.batch(chunk.to_vec()).await?;
-        }
-    }
-
-    Ok(())
-}
+use super::get_batch_size;
 
 #[worker::send]
 pub async fn import_data(
@@ -74,7 +51,7 @@ pub async fn import_data(
     }
 
     // Execute folder inserts in batches
-    execute_in_batches(&db, folder_statements, batch_size).await?;
+    db::execute_in_batches(&db, folder_statements, batch_size).await?;
 
     // Process folder relationships
     for relationship in payload.folder_relationships {
@@ -146,7 +123,7 @@ pub async fn import_data(
     }
 
     // Execute cipher inserts in batches
-    execute_in_batches(&db, cipher_statements, batch_size).await?;
+    db::execute_in_batches(&db, cipher_statements, batch_size).await?;
 
     Ok(Json(()))
 }
