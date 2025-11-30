@@ -5,7 +5,7 @@ use axum::{
 use std::sync::Arc;
 use worker::Env;
 
-use crate::handlers::{accounts, ciphers, config, emergency_access, folders, identity, import, sync, webauth};
+use crate::handlers::{accounts, ciphers, config, devices, emergency_access, folders, identity, import, sync, webauth};
 
 pub fn api_router(env: Env) -> Router {
     let app_state = Arc::new(env);
@@ -78,6 +78,8 @@ pub fn api_router(env: Env) -> Router {
             "/api/emergency-access/granted",
             get(emergency_access::get_granted_access),
         )
+        // Devices (stub - returns empty list, device tracking not implemented)
+        .route("/api/devices", get(devices::get_devices))
         // WebAuthn (stub - prevents 404 errors, passkeys not supported)
         .route(
             "/api/webauthn",

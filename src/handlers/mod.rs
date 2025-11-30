@@ -1,6 +1,7 @@
 pub mod accounts;
 pub mod ciphers;
 pub mod config;
+pub mod devices;
 pub mod emergency_access;
 pub mod folders;
 pub mod identity;
