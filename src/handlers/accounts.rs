@@ -89,12 +89,13 @@ pub async fn register(
 
     query!(
         &db,
-        "INSERT INTO users (id, name, email, master_password_hash, password_salt, key, private_key, public_key, kdf_iterations, security_stamp, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+        "INSERT INTO users (id, name, email, master_password_hash, master_password_hint, password_salt, key, private_key, public_key, kdf_iterations, security_stamp, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
          user.id,
          user.name,
          user.email,
          user.master_password_hash,
+         user.master_password_hint,
          user.password_salt,
          user.key,
          user.private_key,
