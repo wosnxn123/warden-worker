@@ -11,14 +11,7 @@ use crate::models::cipher::{Cipher, CipherData};
 use crate::models::folder::Folder;
 use crate::models::import::ImportRequest;
 
-/// Get the batch size from environment variable IMPORT_BATCH_SIZE.
-/// Defaults to 30 if not set or invalid.
-fn get_batch_size(env: &Env) -> usize {
-    env.var("IMPORT_BATCH_SIZE")
-        .ok()
-        .and_then(|v| v.to_string().parse::<usize>().ok())
-        .unwrap_or(30)
-}
+use super::{get_batch_size};
 
 /// Execute statements in batches. If batch_size is 0, execute all in one batch.
 async fn execute_in_batches(

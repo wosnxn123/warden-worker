@@ -1,15 +1,37 @@
+use super::get_batch_size;
 use axum::{extract::State, Json};
 use chrono::Utc;
 use serde::Deserialize;
 use std::sync::Arc;
 use uuid::Uuid;
-use worker::{query, Env};
+use worker::{query, D1PreparedStatement, Env};
 
 use crate::auth::Claims;
 use crate::db;
 use crate::error::AppError;
 use crate::models::cipher::{Cipher, CipherData, CipherRequestData, CreateCipherRequest};
 use axum::extract::Path;
+
+/// Execute D1 statements in batches, allowing batch_size 0 to run everything at once.
+async fn execute_in_batches(
+    db: &worker::D1Database,
+    statements: Vec<D1PreparedStatement>,
+    batch_size: usize,
+) -> Result<(), AppError> {
+    if statements.is_empty() {
+        return Ok(());
+    }
+
+    if batch_size == 0 {
+        db.batch(statements).await?;
+    } else {
+        for chunk in statements.chunks(batch_size) {
+            db.batch(chunk.to_vec()).await?;
+        }
+    }
+
+    Ok(())
+}
 
 #[worker::send]
 pub async fn create_cipher(
@@ -198,19 +220,23 @@ pub async fn soft_delete_ciphers_bulk(
 ) -> Result<Json<()>, AppError> {
     let db = db::get_db(&env)?;
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
+    let batch_size = get_batch_size(&env);
+    let mut statements = Vec::with_capacity(payload.ids.len());
 
     for id in payload.ids {
-        query!(
+        let stmt = query!(
             &db,
             "UPDATE ciphers SET deleted_at = ?1, updated_at = ?1 WHERE id = ?2 AND user_id = ?3",
             now,
             id,
             claims.sub
         )
-        .map_err(|_| AppError::Database)?
-        .run()
-        .await?;
+        .map_err(|_| AppError::Database)?;
+
+        statements.push(stmt);
     }
+
+    execute_in_batches(&db, statements, batch_size).await?;
 
     Ok(Json(()))
 }
@@ -246,18 +272,22 @@ pub async fn hard_delete_ciphers_bulk(
     Json(payload): Json<CipherIdsData>,
 ) -> Result<Json<()>, AppError> {
     let db = db::get_db(&env)?;
+    let batch_size = get_batch_size(&env);
+    let mut statements = Vec::with_capacity(payload.ids.len());
 
     for id in payload.ids {
-        query!(
+        let stmt = query!(
             &db,
             "DELETE FROM ciphers WHERE id = ?1 AND user_id = ?2",
             id,
             claims.sub
         )
-        .map_err(|_| AppError::Database)?
-        .run()
-        .await?;
+        .map_err(|_| AppError::Database)?;
+
+        statements.push(stmt);
     }
+
+    execute_in_batches(&db, statements, batch_size).await?;
 
     Ok(Json(()))
 }
@@ -318,23 +348,28 @@ pub async fn restore_ciphers_bulk(
 ) -> Result<Json<BulkRestoreResponse>, AppError> {
     let db = db::get_db(&env)?;
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
+    let batch_size = get_batch_size(&env);
+    let ids = payload.ids;
+    let mut update_statements = Vec::with_capacity(ids.len());
 
-    let mut restored_ciphers = Vec::new();
-
-    for id in payload.ids {
-        // Update the cipher to clear deleted_at
-        query!(
+    for id in ids.iter() {
+        let stmt = query!(
             &db,
             "UPDATE ciphers SET deleted_at = NULL, updated_at = ?1 WHERE id = ?2 AND user_id = ?3",
             now,
-            id,
+            id.clone(),
             claims.sub
         )
-        .map_err(|_| AppError::Database)?
-        .run()
-        .await?;
+        .map_err(|_| AppError::Database)?;
 
-        // Fetch the restored cipher
+        update_statements.push(stmt);
+    }
+
+    execute_in_batches(&db, update_statements, batch_size).await?;
+
+    let mut restored_ciphers = Vec::with_capacity(ids.len());
+
+    for id in ids {
         let cipher_db: Option<crate::models::cipher::CipherDBModel> = query!(
             &db,
             "SELECT * FROM ciphers WHERE id = ?1 AND user_id = ?2",

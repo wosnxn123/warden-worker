@@ -159,7 +159,7 @@ You can configure the following environment variables in `wrangler.toml` under t
 
 *   **`IMPORT_BATCH_SIZE`** (Optional, Default: `30`)
     
-    Number of records to process in each batch when importing data. This helps manage memory usage and processing time for large imports.
+    Number of records to process in each batch when importing and deleting data. This helps manage memory usage and processing time for large imports.
     
     *   Set to `0` to disable batching (all records imported in a single batch)
     *   Defaults to `30` records per batch if not specified
