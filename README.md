@@ -141,6 +141,82 @@ Add the following secrets to your GitHub repository (`Settings > Secrets and var
     - `JWT_SECRET` a long random string
     - `JWT_REFRESH_SECRET` a long random string
 
+### Deploying the Frontend
+
+The Bitwarden web vault frontend can be deployed to Cloudflare Pages separately. This project uses [bw_web_builds](https://github.com/dani-garcia/bw_web_builds) (the Vaultwarden web vault builds) as the frontend.
+
+> ⚠️ **Important:** The web vault frontend comes from Vaultwarden and therefore **exposes many advanced UI features**, but most of them are **non-functional** because Warden Worker's backend intentionally does **NOT** implement the corresponding APIs. In practice, it mainly provides bulk management capabilities that aren't available in browser extensions. The following features (among others) are not supported:
+> - Sharing vaults
+> - Device management
+> - Organizations
+> - Send functionality
+> - Emergency access
+> - Admin console features
+> - And many other advanced Bitwarden features
+
+#### Step 1: Deploy to Cloudflare Pages
+
+1. **Ensure the required secrets are configured** (same secrets as backend deployment):
+   - `CLOUDFLARE_API_TOKEN`
+   - `CLOUDFLARE_ACCOUNT_ID`
+
+2. **Manually trigger the deployment:**
+   - Go to your GitHub repository → **Actions** tab
+   - Find the **"Deploy Frontend"** workflow
+   - Click **"Run workflow"** → **"Run workflow"**
+   - The workflow will download the latest web vault release and deploy it to Cloudflare Pages with project name `warden-frontend`
+
+#### Step 2: Configure Custom Domain in Cloudflare Console
+
+After deploying, you need to configure custom domains to connect the frontend (Pages) and backend (Worker):
+
+1. **Set a custom domain for the frontend (Cloudflare Pages):**
+   - Log in to [Cloudflare Dashboard](https://dash.cloudflare.com/)
+   - Go to **Workers & Pages** → Select your `warden-frontend` project
+   - Click **Custom domains** tab → **Set up a custom domain**
+   - Enter your desired domain (e.g., `vault.example.com`)
+   - Follow the prompts to add DNS records and verify the domain
+
+2. **Add Worker routes for API endpoints:**
+   
+   The frontend needs to communicate with the backend Worker via `/api/*` and `/identity/*` paths. You need to add routes to your Worker:
+   
+   - Go to **Workers & Pages** → Select your `warden-worker` (backend Worker)
+   - Click **Settings** → **Domains & Routes**
+   - Click **Add** → **Route**
+   - Add the following routes (replace `vault.example.com` with your domain):
+     - Route: `vault.example.com/api/*` → Select your Worker
+     - Route: `vault.example.com/identity/*` → Select your Worker
+   - Make sure the **Zone** matches your domain's zone
+
+   > **Note:** The routes ensure that API requests from the frontend are handled by your Worker backend, while all other requests are served by Cloudflare Pages.
+
+#### Step 3: Configure Rate Limiting (Recommended)
+
+To protect your authentication endpoints from brute force attacks, it's highly recommended to configure rate limiting rules:
+
+1. **Navigate to Security Settings:**
+   - In Cloudflare Dashboard, select your domain (e.g., `example.com`)
+   - Go to **Security** → **WAF** → **Rate limiting rules**
+
+2. **Create a rate limiting rule:**
+   - Click **Create rule**
+   - **Rule name:** `Limit Identity API`
+   - **If incoming requests match...** 
+     - Field: `URI Path`
+     - Operator: `starts with`
+     - Value: `/identity/`
+   - **Then take action:**
+     - Choose action: `Block` or `Managed Challenge`
+     - **Rate limit:** Set requests per period (e.g., `10 requests per 1 minute`)
+   - Click **Deploy**
+
+   > **Tip:** You can also use the expression builder with: `(starts_with(http.request.uri.path, "/identity/"))`
+
+3. **Optional - Additional security rules:**
+   - Consider adding similar rules for `/api/accounts/` endpoints
+   - You may also enable **Bot Fight Mode** under Security → Bots for additional protection
+
 ## Configuration
 
 This project requires minimal configuration. The main configuration is done in the `wrangler.toml` file, where you specify your D1 database binding.
