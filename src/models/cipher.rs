@@ -155,7 +155,7 @@ impl Into<Cipher> for CipherDBModel {
             deleted_at: self.deleted_at,
             created_at: self.created_at,
             updated_at: self.updated_at,
-            object: "default_object".to_string(),
+            object: "cipherDetails".to_string(),
             organization_use_totp: false,
             edit: true,
             view_password: true,
@@ -264,7 +264,7 @@ impl Serialize for Cipher {
 }
 
 fn default_object() -> String {
-    "cipher".to_string()
+    "cipherDetails".to_string()
 }
 
 fn default_true() -> bool {

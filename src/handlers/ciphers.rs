@@ -331,8 +331,17 @@ pub async fn restore_ciphers_bulk(
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
     let batch_size = get_batch_size(&env);
     let ids = payload.ids;
-    let mut update_statements: Vec<D1PreparedStatement> = Vec::with_capacity(ids.len());
 
+    if ids.is_empty() {
+        return Ok(Json(BulkRestoreResponse {
+            data: vec![],
+            object: "list".to_string(),
+            continuation_token: None,
+        }));
+    }
+
+    // Batch UPDATE operations
+    let mut update_statements: Vec<D1PreparedStatement> = Vec::with_capacity(ids.len());
     for id in ids.iter() {
         let stmt = query!(
             &db,
@@ -345,26 +354,20 @@ pub async fn restore_ciphers_bulk(
 
         update_statements.push(stmt);
     }
-
     db::execute_in_batches(&db, update_statements, batch_size).await?;
 
-    let mut restored_ciphers = Vec::with_capacity(ids.len());
+    // Batch SELECT using json_each() - avoid N+1 query problem
+    let ids_json = serde_json::to_string(&ids).map_err(|_| AppError::Internal)?;
 
-    for id in ids {
-        let cipher_db: Option<crate::models::cipher::CipherDBModel> = query!(
-            &db,
-            "SELECT * FROM ciphers WHERE id = ?1 AND user_id = ?2",
-            id,
-            claims.sub
-        )
-        .map_err(|_| AppError::Database)?
-        .first(None)
-        .await?;
-
-        if let Some(cipher) = cipher_db {
-            restored_ciphers.push(cipher.into());
-        }
-    }
+    let restored_ciphers: Vec<Cipher> = db
+        .prepare("SELECT * FROM ciphers WHERE user_id = ?1 AND id IN (SELECT value FROM json_each(?2))")
+        .bind(&[claims.sub.clone().into(), ids_json.into()])?
+        .all()
+        .await?
+        .results::<crate::models::cipher::CipherDBModel>()?
+        .into_iter()
+        .map(|cipher| cipher.into())
+        .collect();
 
     db::touch_user_updated_at(&db, &claims.sub).await?;
 
