@@ -183,41 +183,8 @@ pub struct RotateAccountKeys {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RotateAccountData {
-    pub ciphers: Vec<RotateCipherData>,
+    pub ciphers: Vec<crate::models::cipher::CipherRequestData>,
     pub folders: Vec<RotateFolderData>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RotateCipherData {
-    pub id: String,
-    #[serde(rename = "type")]
-    pub r#type: i32,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub folder_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub organization_id: Option<String>,
-    pub name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub notes: Option<String>,
-    #[serde(default)]
-    pub favorite: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub login: Option<serde_json::Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub card: Option<serde_json::Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub identity: Option<serde_json::Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub secure_note: Option<serde_json::Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub fields: Option<serde_json::Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub password_history: Option<serde_json::Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reprompt: Option<i32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub key: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

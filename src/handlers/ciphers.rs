@@ -26,13 +26,7 @@ pub async fn create_cipher(
     let cipher_data = CipherData {
         name: cipher_data_req.name,
         notes: cipher_data_req.notes,
-        login: cipher_data_req.login,
-        card: cipher_data_req.card,
-        identity: cipher_data_req.identity,
-        secure_note: cipher_data_req.secure_note,
-        fields: cipher_data_req.fields,
-        password_history: cipher_data_req.password_history,
-        reprompt: cipher_data_req.reprompt,
+        type_fields: cipher_data_req.type_fields,
     };
 
     let data_value = serde_json::to_value(&cipher_data).map_err(|_| AppError::Internal)?;
@@ -43,7 +37,7 @@ pub async fn create_cipher(
         organization_id: cipher_data_req.organization_id.clone(),
         r#type: cipher_data_req.r#type,
         data: data_value,
-        favorite: cipher_data_req.favorite,
+        favorite: cipher_data_req.favorite.unwrap_or(false),
         folder_id: cipher_data_req.folder_id.clone(),
         deleted_at: None,
         created_at: now.clone(),
@@ -111,13 +105,7 @@ pub async fn update_cipher(
     let cipher_data = CipherData {
         name: cipher_data_req.name,
         notes: cipher_data_req.notes,
-        login: cipher_data_req.login,
-        card: cipher_data_req.card,
-        identity: cipher_data_req.identity,
-        secure_note: cipher_data_req.secure_note,
-        fields: cipher_data_req.fields,
-        password_history: cipher_data_req.password_history,
-        reprompt: cipher_data_req.reprompt,
+        type_fields: cipher_data_req.type_fields,
     };
 
     let data_value = serde_json::to_value(&cipher_data).map_err(|_| AppError::Internal)?;
@@ -128,7 +116,7 @@ pub async fn update_cipher(
         organization_id: cipher_data_req.organization_id.clone(),
         r#type: cipher_data_req.r#type,
         data: data_value,
-        favorite: cipher_data_req.favorite,
+        favorite: cipher_data_req.favorite.unwrap_or(false),
         folder_id: cipher_data_req.folder_id.clone(),
         deleted_at: None,
         created_at: existing_cipher.created_at,
@@ -403,13 +391,7 @@ pub async fn create_cipher_simple(
     let cipher_data = CipherData {
         name: payload.name,
         notes: payload.notes,
-        login: payload.login,
-        card: payload.card,
-        identity: payload.identity,
-        secure_note: payload.secure_note,
-        fields: payload.fields,
-        password_history: payload.password_history,
-        reprompt: payload.reprompt,
+        type_fields: payload.type_fields,
     };
 
     let data_value = serde_json::to_value(&cipher_data).map_err(|_| AppError::Internal)?;
@@ -420,7 +402,7 @@ pub async fn create_cipher_simple(
         organization_id: payload.organization_id.clone(),
         r#type: payload.r#type,
         data: data_value,
-        favorite: payload.favorite,
+        favorite: payload.favorite.unwrap_or(false),
         folder_id: payload.folder_id.clone(),
         deleted_at: None,
         created_at: now.clone(),

@@ -1,13 +1,20 @@
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{json, Map, Value};
 
-// This struct represents the data stored in the `data` column of the `ciphers` table.
-#[derive(Debug, Serialize, Deserialize, Clone)]
+// Cipher types:
+//   Login = 1,
+//   SecureNote = 2,
+//   Card = 3,
+//   Identity = 4,
+//   SshKey = 5
+
+/// Common cipher type-specific fields shared across multiple cipher structures.
+/// These represent the encrypted content fields that vary based on cipher type.
+/// Used with `#[serde(flatten)]` to embed these fields into other structs.
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
-pub struct CipherData {
-    pub name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub notes: Option<String>,
+pub struct CipherTypeFields {
+    // Only one of these should exist, depending on cipher type
     #[serde(skip_serializing_if = "Option::is_none")]
     pub login: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -17,11 +24,25 @@ pub struct CipherData {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub secure_note: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub ssh_key: Option<Value>,
+    // Common fields
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub fields: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub password_history: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reprompt: Option<i32>,
+}
+
+/// This struct represents the data stored in the `data` column of the `ciphers` table.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct CipherData {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub notes: Option<String>,
+    #[serde(flatten)]
+    pub type_fields: CipherTypeFields,
 }
 
 // Custom deserialization function for booleans
@@ -209,12 +230,14 @@ impl Serialize for Cipher {
             let mut secure_note = Value::Null;
             let mut card = Value::Null;
             let mut identity = Value::Null;
+            let mut ssh_key = Value::Null;
 
             match self.r#type {
                 1 => login = data_clone.get("login").cloned().unwrap_or(Value::Null),
                 2 => secure_note = data_clone.get("secureNote").cloned().unwrap_or(Value::Null),
                 3 => card = data_clone.get("card").cloned().unwrap_or(Value::Null),
                 4 => identity = data_clone.get("identity").cloned().unwrap_or(Value::Null),
+                5 => ssh_key = data_clone.get("sshKey").cloned().unwrap_or(Value::Null),
                 _ => {}
             }
 
@@ -222,6 +245,7 @@ impl Serialize for Cipher {
             response_map.insert("secureNote".to_string(), secure_note);
             response_map.insert("card".to_string(), card);
             response_map.insert("identity".to_string(), identity);
+            response_map.insert("sshKey".to_string(), ssh_key);
         } else {
             response_map.insert("name".to_string(), Value::Null);
             response_map.insert("notes".to_string(), Value::Null);
@@ -232,6 +256,7 @@ impl Serialize for Cipher {
             response_map.insert("secureNote".to_string(), Value::Null);
             response_map.insert("card".to_string(), Value::Null);
             response_map.insert("identity".to_string(), Value::Null);
+            response_map.insert("sshKey".to_string(), Value::Null);
         }
 
         Value::Object(response_map).serialize(serializer)
@@ -246,44 +271,38 @@ fn default_true() -> bool {
     true
 }
 
-// Represents the "Cipher" object within the incoming request payload.
-#[derive(Debug, Serialize, Deserialize)]
+/// Represents the "Cipher" object within incoming request payloads.
+/// Used for create, update, import, and key rotation scenarios.
+/// Aligned with vaultwarden's CipherData structure.
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct CipherRequestData {
-    #[serde(rename = "type")]
-    pub r#type: i32,
+    // Id is optional as it is included only in bulk share / key rotation
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    // Folder id is not included in import (determined by folder_relationships)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub folder_id: Option<String>,
+    #[serde(alias = "organizationID")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub organization_id: Option<String>,
+    #[serde(rename = "type")]
+    pub r#type: i32,
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub notes: Option<String>,
     #[serde(default)]
-    pub favorite: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub login: Option<Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub card: Option<Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub identity: Option<Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub secure_note: Option<Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub fields: Option<Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub password_history: Option<Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reprompt: Option<i32>,
+    pub favorite: Option<bool>,
+    #[serde(flatten)]
+    pub type_fields: CipherTypeFields,
+    // The revision datetime (in ISO 8601 format) of the client's local copy
+    // Used to prevent updating a cipher when client doesn't have the latest version
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_known_revision_date: Option<String>,
-    /// Cipher key field used for cipher key rotation scenarios
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub key: Option<String>,
 }
 
-// Represents the full request payload for creating a cipher.
-// Supports both camelCase and PascalCase for compatibility with different clients.
+/// Represents the full request payload for creating a cipher with collections.
+/// Supports both camelCase and PascalCase for compatibility with different clients.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateCipherRequest {

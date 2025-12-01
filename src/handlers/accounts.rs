@@ -293,15 +293,29 @@ pub async fn post_rotatekey(
     }
 
     // Validate data integrity using D1 batch operations
-    // Step 1: Count check - ensure request has exactly the same number of items
-    // Step 2: EXCEPT check - ensure request has exactly the same IDs
-    let request_cipher_ids: Vec<String> = payload
+    // Step 1: Ensure all personal ciphers have id (required for key rotation)
+    // Step 2: Count check - ensure request has exactly the same number of items as DB
+    // Step 3: EXCEPT check - ensure request has exactly the same IDs as DB
+    let personal_ciphers: Vec<_> = payload
         .account_data
         .ciphers
         .iter()
         .filter(|c| c.organization_id.is_none())
-        .map(|c| c.id.clone())
         .collect();
+
+    let request_cipher_ids: Vec<String> = personal_ciphers
+        .iter()
+        .filter_map(|c| c.id.clone())
+        .collect();
+
+    // All personal ciphers must have an id for key rotation
+    if personal_ciphers.len() != request_cipher_ids.len() {
+        log::error!("All ciphers must have an id for key rotation: {:?} != {:?}", personal_ciphers.len(), request_cipher_ids.len());
+        return Err(AppError::BadRequest(
+            "All ciphers must have an id for key rotation".to_string(),
+        ));
+    }
+
     // Filter out null folder IDs (Bitwarden client bug: https://github.com/bitwarden/clients/issues/8453)
     let request_folder_ids: Vec<String> = payload
         .account_data
@@ -400,23 +414,15 @@ pub async fn post_rotatekey(
     // Update all ciphers with new encrypted data (batch operation)
     // Only update personal ciphers (organization_id is None)
     let mut cipher_statements: Vec<D1PreparedStatement> =
-        Vec::with_capacity(payload.account_data.ciphers.len());
-    for cipher in &payload.account_data.ciphers {
-        // Skip organization ciphers
-        if cipher.organization_id.is_some() {
-            continue;
-        }
+        Vec::with_capacity(personal_ciphers.len());
+    for cipher in personal_ciphers {
+        // id is guaranteed to exist (validated above)
+        let cipher_id = cipher.id.as_ref().unwrap();
 
         let cipher_data = CipherData {
             name: cipher.name.clone(),
             notes: cipher.notes.clone(),
-            login: cipher.login.clone(),
-            card: cipher.card.clone(),
-            identity: cipher.identity.clone(),
-            secure_note: cipher.secure_note.clone(),
-            fields: cipher.fields.clone(),
-            password_history: cipher.password_history.clone(),
-            reprompt: cipher.reprompt,
+            type_fields: cipher.type_fields.clone(),
         };
 
         let data = serde_json::to_string(&cipher_data).map_err(|_| AppError::Internal)?;
@@ -426,9 +432,9 @@ pub async fn post_rotatekey(
             "UPDATE ciphers SET data = ?1, folder_id = ?2, favorite = ?3, updated_at = ?4 WHERE id = ?5 AND user_id = ?6",
             data,
             cipher.folder_id,
-            cipher.favorite,
+            cipher.favorite.unwrap_or(false),
             now,
-            cipher.id,
+            cipher_id,
             user_id
         )
         .map_err(|_| AppError::Database)?;
