@@ -78,8 +78,29 @@ pub fn api_router(env: Env) -> Router {
             "/api/emergency-access/granted",
             get(emergency_access::get_granted_access),
         )
-        // Devices (stub - returns empty list, device tracking not implemented)
+        // Devices (stub - device tracking not implemented, JWT-based auth)
         .route("/api/devices", get(devices::get_devices))
+        .route("/api/devices/knowndevice", get(devices::get_known_device))
+        .route(
+            "/api/devices/identifier/{device_id}",
+            get(devices::get_device),
+        )
+        .route(
+            "/api/devices/identifier/{device_id}/token",
+            post(devices::post_device_token),
+        )
+        .route(
+            "/api/devices/identifier/{device_id}/token",
+            put(devices::put_device_token),
+        )
+        .route(
+            "/api/devices/identifier/{device_id}/clear-token",
+            put(devices::put_clear_device_token),
+        )
+        .route(
+            "/api/devices/identifier/{device_id}/clear-token",
+            post(devices::post_clear_device_token),
+        )
         // WebAuthn (stub - prevents 404 errors, passkeys not supported)
         .route(
             "/api/webauthn",
