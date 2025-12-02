@@ -90,7 +90,7 @@ There are no immediate plans to implement these features. The primary goal of th
 
     This will deploy the worker and set up the necessary database tables.
 
-5. **Set environment variables**
+5. **Set environment variables** as `Secret`
    
 - `ALLOWED_EMAILS` your-email@example.com
 - `JWT_SECRET` a long random string
