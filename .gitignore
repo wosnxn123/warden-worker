@@ -1,3 +1,6 @@
 target
 node_modules
 .wrangler
+.env
+# Frontend files (downloaded during deployment/development)
+public/

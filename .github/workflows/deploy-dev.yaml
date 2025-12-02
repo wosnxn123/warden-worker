@@ -26,6 +26,33 @@ jobs:
                     cargo install worker-build
                   fi
 
+            - name: Download and extract frontend (bw_web_builds)
+              run: |
+                  # Get latest version tag from bw_web_builds
+                  LATEST_TAG=$(curl -s https://api.github.com/repos/dani-garcia/bw_web_builds/releases/latest | jq -r .tag_name)
+                  echo "📦 Downloading frontend version: $LATEST_TAG"
+                  
+                  # Download the web vault release
+                  wget -q "https://github.com/dani-garcia/bw_web_builds/releases/download/$LATEST_TAG/bw_web_${LATEST_TAG}.tar.gz"
+                  
+                  # Create public directory and extract
+                  mkdir -p public
+                  tar -xzf bw_web_${LATEST_TAG}.tar.gz -C public/
+                  
+                  # bw_web_builds extracts with a web-vault folder, move contents out
+                  if [ -d "public/web-vault" ]; then
+                    shopt -s dotglob
+                    mv public/web-vault/* public/
+                    shopt -u dotglob
+                    rmdir public/web-vault
+                  fi
+                  
+                  # Cleanup
+                  rm -f bw_web_${LATEST_TAG}.tar.gz
+                  
+                  echo "✅ Frontend files extracted to ./public"
+                  ls -la public/ | head -20
+
             - name: Replace D1_DATABASE_ID_DEV in wrangler.toml
               run: sed -i "s/\${D1_DATABASE_ID_DEV}/${{ secrets.D1_DATABASE_ID_DEV }}/g" wrangler.toml
 

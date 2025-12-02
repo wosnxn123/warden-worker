@@ -82,7 +82,26 @@ There are no immediate plans to implement these features. The primary goal of th
     wrangler deploy
     ```
 
-4.  **Deploy the worker:**
+4.  **Download the frontend (Web Vault):**
+
+    ```bash
+    # Get latest version tag
+    LATEST_TAG=$(curl -s https://api.github.com/repos/dani-garcia/bw_web_builds/releases/latest | jq -r .tag_name)
+
+    # Download and extract
+    wget "https://github.com/dani-garcia/bw_web_builds/releases/download/$LATEST_TAG/bw_web_${LATEST_TAG}.tar.gz"
+    mkdir -p public
+    tar -xzf bw_web_${LATEST_TAG}.tar.gz -C public/
+
+    # Move files from web-vault subfolder
+    shopt -s dotglob
+    mv public/web-vault/* public/
+    shopt -u dotglob
+    rmdir public/web-vault
+    rm bw_web_${LATEST_TAG}.tar.gz
+    ```
+
+5.  **Deploy the worker:**
 
     ```bash
     wrangler deploy
@@ -90,13 +109,13 @@ There are no immediate plans to implement these features. The primary goal of th
 
     This will deploy the worker and set up the necessary database tables.
 
-5. **Set environment variables** as `Secret`
-   
+6. **Set environment variables** as `Secret`
+
 - `ALLOWED_EMAILS` your-email@example.com
 - `JWT_SECRET` a long random string
 - `JWT_REFRESH_SECRET` a long random string
 
-6.  **Configure your Bitwarden client:**
+7.  **Configure your Bitwarden client:**
 
     In your Bitwarden client, go to the self-hosted login screen and enter the URL of your deployed worker (e.g., `https://warden-worker.your-username.workers.dev`).
 
@@ -141,9 +160,17 @@ Add the following secrets to your GitHub repository (`Settings > Secrets and var
     - `JWT_SECRET` a long random string
     - `JWT_REFRESH_SECRET` a long random string
 
-### Deploying the Frontend
+### Frontend (Web Vault)
 
-The Bitwarden web vault frontend can be deployed to Cloudflare Pages separately. This project uses [bw_web_builds](https://github.com/dani-garcia/bw_web_builds) (the Vaultwarden web vault builds) as the frontend.
+The frontend is automatically bundled with the Worker deployment using [Cloudflare Workers Static Assets](https://developers.cloudflare.com/workers/static-assets/). The GitHub Actions workflow automatically downloads the latest [bw_web_builds](https://github.com/dani-garcia/bw_web_builds) (Vaultwarden web vault) and deploys it together with the backend.
+
+**How it works:**
+- Static files (HTML, CSS, JS) are served directly by Cloudflare's edge network
+- API requests (`/api/*`, `/identity/*`) are routed to the Rust Worker
+- No separate Pages deployment or domain configuration needed
+
+> [!NOTE]
+> **Migrating from separate frontend deployment?** If you previously deployed the frontend separately to Cloudflare Pages (using the old `deploy-frontend.yml` workflow), you can now delete the `warden-frontend` Pages project from your Cloudflare Dashboard and re-setup the router for worker. The frontend is now bundled with the Worker and no longer requires a separate deployment.
 
 > ⚠️ **Important:** The web vault frontend comes from Vaultwarden and therefore **exposes many advanced UI features**, but most of them are **non-functional** because Warden Worker's backend intentionally does **NOT** implement the corresponding APIs. In practice, it mainly provides bulk management capabilities that aren't available in browser extensions. The following features (among others) are not supported:
 > - Sharing vaults
@@ -154,44 +181,37 @@ The Bitwarden web vault frontend can be deployed to Cloudflare Pages separately.
 > - Admin console features
 > - And many other advanced Bitwarden features
 
-#### Step 1: Deploy to Cloudflare Pages
+### Configure Custom Domain (Optional)
 
-1. **Ensure the required secrets are configured** (same secrets as backend deployment):
-   - `CLOUDFLARE_API_TOKEN`
-   - `CLOUDFLARE_ACCOUNT_ID`
+If you want to use a custom domain instead of the default `*.workers.dev` domain, follow these steps:
 
-2. **Manually trigger the deployment:**
-   - Go to your GitHub repository → **Actions** tab
-   - Find the **"Deploy Frontend"** workflow
-   - Click **"Run workflow"** → **"Run workflow"**
-   - The workflow will download the latest web vault release and deploy it to Cloudflare Pages with project name `warden-frontend`
+#### Step 1: Add DNS Record
 
-#### Step 2: Configure Custom Domain in Cloudflare Console
+1. Log in to [Cloudflare Dashboard](https://dash.cloudflare.com/)
+2. Select your domain (e.g., `example.com`)
+3. Go to **DNS** → **Records**
+4. Click **Add record**:
+   - **Type:** `A` (or `AAAA` for IPv6)
+   - **Name:** your subdomain (e.g., `vault` for `vault.example.com`)
+   - **IPv4 address:** `192.0.2.1` (this is a placeholder, the actual routing is handled by Worker)
+   - **Proxy status:** **Proxied** (orange cloud icon - this is required!)
+   - **TTL:** Auto
+5. Click **Save**
 
-After deploying, you need to configure custom domains to connect the frontend (Pages) and backend (Worker):
+> ⚠️ **Important:** The **Proxy status must be "Proxied"** (orange cloud). If it shows "DNS only" (gray cloud), Worker routes will not work.
 
-1. **Set a custom domain for the frontend (Cloudflare Pages):**
-   - Log in to [Cloudflare Dashboard](https://dash.cloudflare.com/)
-   - Go to **Workers & Pages** → Select your `warden-frontend` project
-   - Click **Custom domains** tab → **Set up a custom domain**
-   - Enter your desired domain (e.g., `vault.example.com`)
-   - Follow the prompts to add DNS records and verify the domain
+#### Step 2: Add Worker Route
 
-2. **Add Worker routes for API endpoints:**
-   
-   The frontend needs to communicate with the backend Worker via `/api/*` and `/identity/*` paths. You need to add routes to your Worker:
-   
-   - Go to **Workers & Pages** → Select your `warden-worker` (backend Worker)
-   - Click **Settings** → **Domains & Routes**
-   - Click **Add** → **Route**
-   - Add the following routes (replace `vault.example.com` with your domain):
-     - Route: `vault.example.com/api/*` → Select your Worker
-     - Route: `vault.example.com/identity/*` → Select your Worker
-   - Make sure the **Zone** matches your domain's zone
+1. Go to **Workers & Pages** → Select your `warden-worker`
+2. Click **Settings** → **Domains & Routes**
+3. Click **Add** → **Route**
+4. Configure the route:
+   - **Route:** `vault.example.com/*` (replace with your domain)
+   - **Zone:** Select your domain zone
+   - **Worker:** `warden-worker`
+5. Click **Add route**
 
-   > **Note:** The routes ensure that API requests from the frontend are handled by your Worker backend, while all other requests are served by Cloudflare Pages.
-
-#### Step 3: Configure Rate Limiting (Recommended)
+### Configure Rate Limiting (Recommended)
 
 To protect your authentication endpoints from brute force attacks, it's highly recommended to configure rate limiting rules:
 
@@ -417,9 +437,46 @@ To use Time Travel:
 
 You can run this Worker locally with full D1 database support using Wrangler. This is useful for development, testing, or as a temporary fallback when Cloudflare services are unavailable.
 
-To run locally with your production data (useful as emergency fallback):
+#### Quick Start (API-only, no frontend)
 
-1.  **Download and decrypt your backup** (follow the steps above)
+```bash
+wrangler dev --persist
+```
+
+This starts the backend API at `http://localhost:8787`. You can use Bitwarden browser extensions or mobile apps directly.
+
+#### Full Stack Development (with Web Vault frontend)
+
+1.  **Download the frontend:**
+
+    ```bash
+    # Get latest version tag
+    LATEST_TAG=$(curl -s https://api.github.com/repos/dani-garcia/bw_web_builds/releases/latest | jq -r .tag_name)
+    
+    # Download and extract
+    wget "https://github.com/dani-garcia/bw_web_builds/releases/download/$LATEST_TAG/bw_web_${LATEST_TAG}.tar.gz"
+    mkdir -p public
+    tar -xzf bw_web_${LATEST_TAG}.tar.gz -C public/
+    
+    # Move files from web-vault subfolder
+    shopt -s dotglob
+    mv public/web-vault/* public/
+    shopt -u dotglob
+    rmdir public/web-vault
+    rm bw_web_${LATEST_TAG}.tar.gz
+    ```
+
+2.  **Start the local server:**
+
+    ```bash
+    wrangler dev --persist
+    ```
+
+3.  **Access the Web Vault** at `http://localhost:8787`
+
+#### Running with Production Data (Emergency Fallback)
+
+1.  **Download and decrypt your backup** (follow the backup restore steps above)
 
 2.  **Import the backup to local D1:**
 

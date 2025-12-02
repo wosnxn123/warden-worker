@@ -6,6 +6,15 @@ keep_vars = true
 [build]
 command = "cargo install -q worker-build && worker-build --release"
 
+# Static assets configuration for serving frontend
+# Frontend files should be placed in ./public directory before deployment
+[assets]
+directory = "./public"
+not_found_handling = "404-page"
+html_handling = "auto-trailing-slash"
+# Only invoke Worker for API and Identity routes, serve static files directly for other routes
+run_worker_first = ["/api/*", "/identity/*"]
+
 [vars]
 # Optional: Set the batch size for imports. Defaults to 30 if not set.
 # Set to 0 means no batching (all records imported in a single batch).
