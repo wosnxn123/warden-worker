@@ -87,8 +87,11 @@ pub async fn get_sync_data(
     let response = SyncResponse {
         profile,
         folders,
+        collections: Vec::new(),
+        policies: Vec::new(),
         ciphers,
         domains: serde_json::Value::Null, // Ignored for basic implementation
+        sends: Vec::new(),
         object: "sync".to_string(),
     };
 
