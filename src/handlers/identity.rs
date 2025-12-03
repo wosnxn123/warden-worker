@@ -39,6 +39,8 @@ pub struct TokenResponse {
     private_key: String,
     #[serde(rename = "Kdf")]
     kdf: i32,
+    #[serde(rename = "KdfIterations")]
+    kdf_iterations: i32,
     #[serde(rename = "ResetMasterPassword")]
     reset_master_password: bool,
     #[serde(rename = "ForcePasswordReset")]
@@ -107,6 +109,7 @@ fn generate_tokens_and_response(
         key: user.key,
         private_key: user.private_key,
         kdf: user.kdf_type,
+        kdf_iterations: user.kdf_iterations,
         force_password_reset: false,
         reset_master_password: false,
         user_decryption_options: UserDecryptionOptions {
