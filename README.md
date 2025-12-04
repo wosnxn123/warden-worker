@@ -224,18 +224,19 @@ This project includes **built-in rate limiting** powered by [Cloudflare's Rate L
 
 #### Protected Endpoints
 
-| Endpoint | Rate Limit | Key Type |
-|----------|------------|----------|
-| `/identity/connect/token` | 5 req/min | Email address |
-| `/api/accounts/register` | 5 req/min | IP address |
-| `/api/accounts/prelogin` | 5 req/min | IP address |
+| Endpoint | Rate Limit | Key Type | Purpose |
+|----------|------------|----------|---------|
+| `/identity/connect/token` | 5 req/min | Email address | Prevent password brute force |
+| `/api/accounts/register` | 5 req/min | IP address | Prevent mass registration & email enumeration |
+| `/api/accounts/prelogin` | 5 req/min | IP address | Prevent email enumeration |
 
 #### How It Works
 
-- The Worker uses a JavaScript wrapper that checks rate limits before forwarding requests to the Rust backend
-- For login attempts, the rate limit key is based on the **email address** (not IP), which prevents attackers from bypassing limits by rotating IPs
-- When a rate limit is exceeded, a `429 Too Many Requests` response is returned with a Bitwarden-compatible error format
+- Rate limiting is implemented natively in Rust using the [`workers-rs`](https://github.com/cloudflare/workers-rs) rate limiter binding
+- The rate limit key is based on the **email address** (not IP), which prevents attackers from bypassing limits by rotating IPs
+- When a rate limit is exceeded, a `429 Too Many Requests` response is returned
 - Rate limits are applied per [Cloudflare location](https://www.cloudflare.com/network/), meaning limits are local to each edge location
+- If the rate limiter binding is not configured, requests will proceed without rate limiting (graceful degradation)
 
 #### Customizing Rate Limits
 

@@ -1,5 +1,5 @@
 name = "warden-worker"
-main = "src/rate-limit-wrapper.js"
+main = "build/index.js"
 compatibility_date = "2025-09-19"
 keep_vars = true
 
