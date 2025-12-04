@@ -600,6 +600,19 @@ pub async fn post_rotatekey(
 }
 
 /// POST /accounts/kdf - Change KDF settings (PBKDF2 <-> Argon2id)
+///
+/// API Format History:
+/// - Bitwarden switched to complex format in v2025.10.0
+/// - Vaultwarden followed in PR #6458, WITHOUT backward compatibility
+/// - We implement backward compatibility to support both formats
+///
+/// Supports two request formats:
+///
+/// 1. Simple/Legacy format (Bitwarden < v2025.10.0, e.g. web vault 2025.07):
+/// { "kdf": 0, "kdfIterations": 650000, "key": "...", "masterPasswordHash": "...", "newMasterPasswordHash": "..." }
+///
+/// 2. Complex format (Bitwarden >= v2025.10.0, e.g. official client 2025.11.x):
+/// { "authenticationData": {...}, "unlockData": {...}, "key": "...", "masterPasswordHash": "...", "newMasterPasswordHash": "..." }
 #[worker::send]
 pub async fn post_kdf(
     claims: Claims,
@@ -628,50 +641,51 @@ pub async fn post_kdf(
         return Err(AppError::Unauthorized("Invalid password".to_string()));
     }
 
-    // Validate that KDF settings match between authentication and unlock data
-    if payload.authentication_data.kdf != payload.unlock_data.kdf {
-        return Err(AppError::BadRequest(
-            "KDF settings must be equal for authentication and unlock".to_string(),
-        ));
+    // Additional validation for complex format
+    if let (Some(ref auth_data), Some(ref unlock_data)) =
+        (&payload.authentication_data, &payload.unlock_data)
+    {
+        // KDF settings must match between authentication and unlock
+        if auth_data.kdf != unlock_data.kdf {
+            return Err(AppError::BadRequest(
+                "KDF settings must be equal for authentication and unlock".to_string(),
+            ));
+        }
+        // Salt (email) must match
+        if user.email != auth_data.salt || user.email != unlock_data.salt {
+            return Err(AppError::BadRequest(
+                "Invalid master password salt".to_string(),
+            ));
+        }
     }
 
-    // Validate that salt (email) matches
-    if user.email != payload.authentication_data.salt
-        || user.email != payload.unlock_data.salt
-    {
-        return Err(AppError::BadRequest(
-            "Invalid master password salt".to_string(),
-        ));
-    }
+    // Extract KDF parameters from either format
+    let (kdf_type, kdf_iterations, kdf_memory, kdf_parallelism) = payload
+        .get_kdf_params()
+        .ok_or_else(|| AppError::BadRequest("Missing KDF parameters".to_string()))?;
 
     // Validate new KDF parameters
-    let kdf = &payload.unlock_data.kdf;
-    ensure_supported_kdf(
-        kdf.kdf,
-        kdf.kdf_iterations,
-        kdf.kdf_memory,
-        kdf.kdf_parallelism,
-    )?;
+    ensure_supported_kdf(kdf_type, kdf_iterations, kdf_memory, kdf_parallelism)?;
 
     // Generate new salt and hash the new password
     let new_salt = generate_salt()?;
-    let new_hashed_password = hash_password_for_storage(
-        &payload.authentication_data.master_password_authentication_hash,
-        &new_salt,
-    )
-    .await?;
+    let new_hashed_password =
+        hash_password_for_storage(payload.get_new_password_hash(), &new_salt).await?;
 
     // Generate new security stamp
     let new_security_stamp = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
 
     // Determine kdf_memory and kdf_parallelism based on KDF type
-    let (kdf_memory, kdf_parallelism) = if kdf.kdf == KDF_TYPE_ARGON2ID {
-        (kdf.kdf_memory, kdf.kdf_parallelism)
+    let (final_kdf_memory, final_kdf_parallelism) = if kdf_type == KDF_TYPE_ARGON2ID {
+        (kdf_memory, kdf_parallelism)
     } else {
         // For PBKDF2, clear these fields
         (None, None)
     };
+
+    // Get the new encrypted user key
+    let new_key = payload.get_new_key();
 
     // Update user record with new KDF settings and password
     query!(
@@ -679,11 +693,11 @@ pub async fn post_kdf(
         "UPDATE users SET master_password_hash = ?1, password_salt = ?2, key = ?3, kdf_type = ?4, kdf_iterations = ?5, kdf_memory = ?6, kdf_parallelism = ?7, security_stamp = ?8, updated_at = ?9 WHERE id = ?10",
         new_hashed_password,
         new_salt,
-        payload.unlock_data.master_key_wrapped_user_key,
-        kdf.kdf,
-        kdf.kdf_iterations,
-        kdf_memory,
-        kdf_parallelism,
+        new_key,
+        kdf_type,
+        kdf_iterations,
+        final_kdf_memory,
+        final_kdf_parallelism,
         new_security_stamp,
         now,
         user_id
