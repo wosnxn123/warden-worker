@@ -63,26 +63,7 @@ pub async fn get_sync_data(
         .map(|cipher| cipher.into())
         .collect::<Vec<Cipher>>();
 
-    let time = chrono::DateTime::parse_from_rfc3339(&user.created_at)
-        .map_err(|_| AppError::Internal)?
-        .to_rfc3339_opts(chrono::SecondsFormat::Micros, true);
-    let profile = Profile {
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        master_password_hint: user.master_password_hint,
-        security_stamp: user.security_stamp,
-        object: "profile".to_string(),
-        premium: true,
-        premium_from_organization: false,
-        email_verified: true,
-        force_password_reset: false,
-        two_factor_enabled: false,
-        uses_key_connector: false,
-        creation_date: time,
-        key: user.key,
-        private_key: user.private_key,
-    };
+    let profile = Profile::from_user(user)?;
 
     let response = SyncResponse {
         profile,

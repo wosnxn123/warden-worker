@@ -1,4 +1,6 @@
-use super::{cipher::Cipher, folder::FolderResponse};
+use super::{cipher::Cipher, folder::FolderResponse, user::User};
+use crate::error::AppError;
+use chrono::SecondsFormat;
 use serde::Serialize;
 use serde_json::Value;
 
@@ -22,6 +24,32 @@ pub struct Profile {
     pub creation_date: String,
     pub private_key: String,
     pub key: String,
+}
+
+impl Profile {
+    pub fn from_user(user: User) -> Result<Self, AppError> {
+        let creation_date = chrono::DateTime::parse_from_rfc3339(&user.created_at)
+            .map_err(|_| AppError::Internal)?
+            .to_rfc3339_opts(SecondsFormat::Micros, true);
+
+        Ok(Self {
+            id: user.id,
+            name: user.name,
+            email: user.email,
+            master_password_hint: user.master_password_hint,
+            security_stamp: user.security_stamp,
+            object: "profile".to_string(),
+            premium_from_organization: false,
+            force_password_reset: false,
+            email_verified: true,
+            two_factor_enabled: false,
+            premium: true,
+            uses_key_connector: false,
+            creation_date,
+            private_key: user.private_key,
+            key: user.key,
+        })
+    }
 }
 
 #[derive(Debug, Serialize)]

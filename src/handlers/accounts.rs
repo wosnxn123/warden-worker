@@ -13,6 +13,7 @@ use crate::{
     error::AppError,
     models::{
         cipher::CipherData,
+        sync::Profile,
         user::{
             ChangePasswordRequest, DeleteAccountRequest, PreloginResponse, RegisterRequest,
             RotateKeyRequest, User,
@@ -178,6 +179,26 @@ pub async fn revision_date(
         .unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
 
     Ok(Json(revision_date))
+}
+
+#[worker::send]
+pub async fn get_profile(
+    claims: Claims,
+    State(env): State<Arc<Env>>,
+) -> Result<Json<Profile>, AppError> {
+    let db = db::get_db(&env)?;
+    let user_id = claims.sub;
+
+    let user: User = db
+        .prepare("SELECT * FROM users WHERE id = ?1")
+        .bind(&[user_id.into()])?
+        .first(None)
+        .await?
+        .ok_or_else(|| AppError::NotFound("User not found".to_string()))?;
+
+    let profile = Profile::from_user(user)?;
+
+    Ok(Json(profile))
 }
 
 #[worker::send]
