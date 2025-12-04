@@ -1,8 +1,3 @@
--- Drop tables if they exist to ensure a clean slate
-DROP TABLE IF EXISTS folders;
-DROP TABLE IF EXISTS ciphers;
-DROP TABLE IF EXISTS users;
-
 -- Users table to store user accounts and their master keys/hashes
 CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY NOT NULL,

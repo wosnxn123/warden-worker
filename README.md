@@ -1,5 +1,8 @@
 # Warden: A Bitwarden-compatible server for Cloudflare Workers
 
+[![Deploy to Cloudflare Workers](https://img.shields.io/badge/Deploy%20to-Cloudflare%20Workers-orange?logo=cloudflare&logoColor=white)](https://workers.cloudflare.com/)
+[![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 This project provides a self-hosted, Bitwarden-compatible server that can be deployed to Cloudflare Workers for free. It's designed to be low-maintenance, allowing you to "deploy and forget" without worrying about server management or recurring costs.
 
 ## Why another Bitwarden server?
@@ -12,7 +15,7 @@ Warden aims to solve this problem by leveraging the Cloudflare Workers ecosystem
 
 *   **Core Vault Functionality:** All your basic vault operations are supported, including creating, reading, updating, and deleting ciphers and folders.
 *   **TOTP Support:** Store and generate Time-based One-Time Passwords for your accounts.
-*   **Bitwarden Compatible:** Works with the official Bitwarden browser extensions and Android app (iOS is untested).
+*   **Bitwarden Compatible:** Works with the official Bitwarden browser extensions and app on both Android and iOS.
 *   **Free to Host:** Runs on Cloudflare's free tier.
 *   **Low Maintenance:** Deploy it once and forget about it.
 *   **Secure:** Your data is stored in your own Cloudflare D1 database.
@@ -20,10 +23,14 @@ Warden aims to solve this problem by leveraging the Cloudflare Workers ecosystem
 
 ## Current Status
 
-**This project is not yet feature-complete.** It currently supports the core functionality of a personal vault, including TOTP. However, it does **not** support the following features:
+**This project is not yet feature-complete**, ~~and it may never be~~. It currently supports the core functionality of a personal vault, including TOTP (storage and generation, not login). However, it does **not** support the following features:
 
 *   Sharing
+*   2FA login
 *   Bitwarden Send
+*   Device and session management
+*   Emergency access
+*   Admin operation
 *   Organizations
 *   Other Bitwarden advanced features
 
@@ -31,9 +38,9 @@ There are no immediate plans to implement these features. The primary goal of th
 
 ## Compatibility
 
-*   **Browser Extensions:** Chrome, Firefox, Safari, etc.
-*   **Android App:** The official Bitwarden Android app.
-*   **iOS App:** Untested. If you have an iOS device, please test and report your findings!
+*   **Browser Extensions:** Chrome, Firefox, Safari, etc. (Tested 2025.11.1 on Chrome)
+*   **Android App:** The official Bitwarden Android app. (Tested 2025.11.0)
+*   **iOS App:** The official Bitwarden iOS app. (Tested 2025.11.0)
 
 ## Getting Started
 
@@ -101,9 +108,14 @@ There are no immediate plans to implement these features. The primary goal of th
     rm bw_web_${LATEST_TAG}.tar.gz
     ```
 
-5.  **Deploy the worker:**
+5.  **Set up database and deploy the worker:**
 
     ```bash
+    # Only run once before first deployment
+    wrangler d1 execute vault1 --file sql/schema.sql --remote
+    # For migrations
+    wrangler d1 migrations apply vault1 --remote
+
     wrangler deploy
     ```
 
@@ -155,7 +167,9 @@ Add the following secrets to your GitHub repository (`Settings > Secrets and var
 
 4.  **Monitor the deployment** in the Actions tab of your repository
 
-5.  **Set environment variables** in the Cloudflare console (following the command line deployment steps):
+5. **Set up tables in database manually** in the Cloudflare console
+
+6.  **Set environment variables** as `secret` in the Cloudflare console (following the command line deployment steps):
     - `ALLOWED_EMAILS` your-email@example.com (supports glob patterns like `*@example.com`)
     - `JWT_SECRET` a long random string
     - `JWT_REFRESH_SECRET` a long random string
@@ -172,14 +186,7 @@ The frontend is automatically bundled with the Worker deployment using [Cloudfla
 > [!NOTE]
 > **Migrating from separate frontend deployment?** If you previously deployed the frontend separately to Cloudflare Pages (using the old `deploy-frontend.yml` workflow), you can now delete the `warden-frontend` Pages project from your Cloudflare Dashboard and re-setup the router for worker. The frontend is now bundled with the Worker and no longer requires a separate deployment.
 
-> ⚠️ **Important:** The web vault frontend comes from Vaultwarden and therefore **exposes many advanced UI features**, but most of them are **non-functional** because Warden Worker's backend intentionally does **NOT** implement the corresponding APIs. In practice, it mainly provides bulk management capabilities that aren't available in browser extensions. The following features (among others) are not supported:
-> - Sharing vaults
-> - Device management
-> - Organizations
-> - Send functionality
-> - Emergency access
-> - Admin console features
-> - And many other advanced Bitwarden features
+> ⚠️ **Important:** The web vault frontend comes from Vaultwarden and therefore **exposes many advanced UI features**, but most of them are **non-functional**. See [Current Status](#current-status)
 
 ### Configure Custom Domain (Optional)
 
@@ -217,7 +224,7 @@ To protect your authentication endpoints from brute force attacks, it's highly r
 
 1. **Navigate to Security Settings:**
    - In Cloudflare Dashboard, select your domain (e.g., `example.com`)
-   - Go to **Security** → **WAF** → **Rate limiting rules**
+   - Go to **Security** → **Security Rules** → **Rate limiting rules**
 
 2. **Create a rate limiting rule:**
    - Click **Create rule**
@@ -228,7 +235,7 @@ To protect your authentication endpoints from brute force attacks, it's highly r
      - Value: `/identity/`
    - **Then take action:**
      - Choose action: `Block` or `Managed Challenge`
-     - **Rate limit:** Set requests per period (e.g., `10 requests per 1 minute`)
+     - **Rate limit:** Set requests per period (e.g., `10 requests per 10 seconds`)
    - Click **Deploy**
 
    > **Tip:** You can also use the expression builder with: `(starts_with(http.request.uri.path, "/identity/"))`
