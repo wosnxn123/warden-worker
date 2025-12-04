@@ -218,9 +218,42 @@ If you want to use a custom domain instead of the default `*.workers.dev` domain
    - **Worker:** `warden-worker`
 5. Click **Add route**
 
-### Configure Rate Limiting (Recommended)
+### Built-in Rate Limiting
 
-To protect your authentication endpoints from brute force attacks, it's highly recommended to configure rate limiting rules:
+This project includes **built-in rate limiting** powered by [Cloudflare's Rate Limiting API](https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/). Rate limiting is automatically applied to sensitive endpoints to protect against brute force attacks.
+
+#### Protected Endpoints
+
+| Endpoint | Rate Limit | Key Type |
+|----------|------------|----------|
+| `/identity/connect/token` | 5 req/min | Email address |
+| `/api/accounts/register` | 5 req/min | IP address |
+| `/api/accounts/prelogin` | 5 req/min | IP address |
+
+#### How It Works
+
+- The Worker uses a JavaScript wrapper that checks rate limits before forwarding requests to the Rust backend
+- For login attempts, the rate limit key is based on the **email address** (not IP), which prevents attackers from bypassing limits by rotating IPs
+- When a rate limit is exceeded, a `429 Too Many Requests` response is returned with a Bitwarden-compatible error format
+- Rate limits are applied per [Cloudflare location](https://www.cloudflare.com/network/), meaning limits are local to each edge location
+
+#### Customizing Rate Limits
+
+You can adjust the rate limit settings in `wrangler.toml`:
+
+```toml
+[[ratelimits]]
+name = "LOGIN_RATE_LIMITER"
+namespace_id = "1001"
+# Adjust limit (requests) and period (10 or 60 seconds)
+simple = { limit = 5, period = 60 }
+```
+
+> **Note:** The `period` must be either `10` or `60` seconds. See [Cloudflare documentation](https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/) for details.
+
+#### Additional Protection (Optional)
+
+For additional security, you can also configure rate limiting rules at the WAF level:
 
 1. **Navigate to Security Settings:**
    - In Cloudflare Dashboard, select your domain (e.g., `example.com`)

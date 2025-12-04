@@ -1,10 +1,21 @@
 name = "warden-worker"
-main = "build/index.js"
+main = "src/rate-limit-wrapper.js"
 compatibility_date = "2025-09-19"
 keep_vars = true
 
 [build]
 command = "cargo install -q worker-build && worker-build --release"
+
+# Rate limiting configuration for protecting sensitive endpoints
+# See: https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/
+[[ratelimits]]
+name = "LOGIN_RATE_LIMITER"
+# A unique identifier for this rate limiter within your Cloudflare account
+# You can use any positive integer
+namespace_id = "1001"
+# Allow 5 requests per 60 seconds per key (email or IP)
+# This prevents brute force attacks while allowing legitimate login attempts
+simple = { limit = 5, period = 60 }
 
 # Static assets configuration for serving frontend
 # Frontend files should be placed in ./public directory before deployment
@@ -42,6 +53,12 @@ keep_vars = true
 # Dev environment also needs cron triggers
 [env.dev.triggers]
 crons = ["0 3 * * *"]
+
+# Rate limiting for dev environment (same settings as production)
+[[env.dev.ratelimits]]
+name = "LOGIN_RATE_LIMITER"
+namespace_id = "1002"
+simple = { limit = 5, period = 60 }
 
 [[env.dev.d1_databases]]
 binding = "vault1"
