@@ -162,6 +162,14 @@ pub async fn register(
 
     let db = db::get_db(&env)?;
     let now = Utc::now().to_rfc3339();
+
+    // Only store kdf_memory and kdf_parallelism for Argon2id, clear for PBKDF2
+    let (kdf_memory, kdf_parallelism) = if payload.kdf == KDF_TYPE_ARGON2ID {
+        (payload.kdf_memory, payload.kdf_parallelism)
+    } else {
+        (None, None)
+    };
+
     let user = User {
         id: Uuid::new_v4().to_string(),
         name: payload.name,
@@ -175,8 +183,8 @@ pub async fn register(
         public_key: payload.user_asymmetric_keys.public_key,
         kdf_type: payload.kdf,
         kdf_iterations: payload.kdf_iterations,
-        kdf_memory: payload.kdf_memory,
-        kdf_parallelism: payload.kdf_parallelism,
+        kdf_memory,
+        kdf_parallelism,
         security_stamp: Uuid::new_v4().to_string(),
         created_at: now.clone(),
         updated_at: now,
@@ -576,6 +584,13 @@ pub async fn post_rotatekey(
     // Generate new security stamp
     let new_security_stamp = Uuid::new_v4().to_string();
 
+    // Only store kdf_memory and kdf_parallelism for Argon2id, clear for PBKDF2
+    let (kdf_memory, kdf_parallelism) = if unlock_data.kdf_type == KDF_TYPE_ARGON2ID {
+        (unlock_data.kdf_memory, unlock_data.kdf_parallelism)
+    } else {
+        (None, None)
+    };
+
     // Update user record with new keys and password
     query!(
         &db,
@@ -586,8 +601,8 @@ pub async fn post_rotatekey(
         payload.account_keys.user_key_encrypted_account_private_key,
         unlock_data.kdf_type,
         unlock_data.kdf_iterations,
-        unlock_data.kdf_memory,
-        unlock_data.kdf_parallelism,
+        kdf_memory,
+        kdf_parallelism,
         new_security_stamp,
         now,
         user_id
