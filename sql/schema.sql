@@ -10,8 +10,10 @@ CREATE TABLE IF NOT EXISTS users (
     key TEXT NOT NULL, -- The encrypted symmetric key
     private_key TEXT NOT NULL, -- encrypted asymmetric private_key
     public_key TEXT NOT NULL, -- asymmetric public_key
-    kdf_type INTEGER NOT NULL DEFAULT 0, -- 0 for PBKDF2
+    kdf_type INTEGER NOT NULL DEFAULT 0, -- 0 for PBKDF2, 1 for Argon2id
     kdf_iterations INTEGER NOT NULL DEFAULT 600000,
+    kdf_memory INTEGER, -- Argon2 memory parameter in MB (15-1024), NULL for PBKDF2
+    kdf_parallelism INTEGER, -- Argon2 parallelism parameter (1-16), NULL for PBKDF2
     security_stamp TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL

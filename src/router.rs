@@ -30,6 +30,8 @@ pub fn api_router(env: Env) -> Router {
         // Delete account
         .route("/api/accounts", delete(accounts::delete_account))
         .route("/api/accounts/delete", post(accounts::delete_account))
+        // Set KDF
+        .route("/api/accounts/kdf", post(accounts::post_kdf))
         // Change password
         .route("/api/accounts/password", post(accounts::post_password))
         // Rotate encryption keys

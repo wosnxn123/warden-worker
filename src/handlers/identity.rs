@@ -41,6 +41,10 @@ pub struct TokenResponse {
     kdf: i32,
     #[serde(rename = "KdfIterations")]
     kdf_iterations: i32,
+    #[serde(rename = "KdfMemory", skip_serializing_if = "Option::is_none")]
+    kdf_memory: Option<i32>,
+    #[serde(rename = "KdfParallelism", skip_serializing_if = "Option::is_none")]
+    kdf_parallelism: Option<i32>,
     #[serde(rename = "ResetMasterPassword")]
     reset_master_password: bool,
     #[serde(rename = "ForcePasswordReset")]
@@ -110,6 +114,8 @@ fn generate_tokens_and_response(
         private_key: user.private_key,
         kdf: user.kdf_type,
         kdf_iterations: user.kdf_iterations,
+        kdf_memory: user.kdf_memory,
+        kdf_parallelism: user.kdf_parallelism,
         force_password_reset: false,
         reset_master_password: false,
         user_decryption_options: UserDecryptionOptions {

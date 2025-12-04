@@ -16,28 +16,70 @@ use crate::{
         cipher::CipherData,
         sync::Profile,
         user::{
-            ChangePasswordRequest, DeleteAccountRequest, PreloginResponse, RegisterRequest,
-            RotateKeyRequest, User,
+            ChangeKdfRequest, ChangePasswordRequest, DeleteAccountRequest, PreloginResponse,
+            RegisterRequest, RotateKeyRequest, User,
         },
     },
 };
 
-const SUPPORTED_KDF_TYPE: i32 = 0; // PBKDF2
+const KDF_TYPE_PBKDF2: i32 = 0;
+const KDF_TYPE_ARGON2ID: i32 = 1;
 const MIN_PBKDF2_ITERATIONS: i32 = 100_000;
 const DEFAULT_PBKDF2_ITERATIONS: i32 = 600_000;
 
-fn ensure_supported_kdf(kdf_type: i32, iterations: i32) -> Result<(), AppError> {
-    if kdf_type != SUPPORTED_KDF_TYPE {
-        return Err(AppError::BadRequest(
-            "Only the PBKDF2 key derivation function is supported".to_string(),
-        ));
-    }
-
-    if iterations < MIN_PBKDF2_ITERATIONS {
-        return Err(AppError::BadRequest(format!(
-            "PBKDF2 iterations must be at least {}",
-            MIN_PBKDF2_ITERATIONS
-        )));
+fn ensure_supported_kdf(
+    kdf_type: i32,
+    iterations: i32,
+    memory: Option<i32>,
+    parallelism: Option<i32>,
+) -> Result<(), AppError> {
+    match kdf_type {
+        KDF_TYPE_PBKDF2 => {
+            if iterations < MIN_PBKDF2_ITERATIONS {
+                return Err(AppError::BadRequest(format!(
+                    "PBKDF2 iterations must be at least {}",
+                    MIN_PBKDF2_ITERATIONS
+                )));
+            }
+        }
+        KDF_TYPE_ARGON2ID => {
+            if iterations < 1 {
+                return Err(AppError::BadRequest(
+                    "Argon2 KDF iterations must be at least 1".to_string(),
+                ));
+            }
+            match memory {
+                Some(m) if (15..=1024).contains(&m) => {}
+                Some(_) => {
+                    return Err(AppError::BadRequest(
+                        "Argon2 memory must be between 15 MB and 1024 MB".to_string(),
+                    ));
+                }
+                None => {
+                    return Err(AppError::BadRequest(
+                        "Argon2 memory parameter is required".to_string(),
+                    ));
+                }
+            }
+            match parallelism {
+                Some(p) if (1..=16).contains(&p) => {}
+                Some(_) => {
+                    return Err(AppError::BadRequest(
+                        "Argon2 parallelism must be between 1 and 16".to_string(),
+                    ));
+                }
+                None => {
+                    return Err(AppError::BadRequest(
+                        "Argon2 parallelism parameter is required".to_string(),
+                    ));
+                }
+            }
+        }
+        _ => {
+            return Err(AppError::BadRequest(
+                "Unsupported KDF type. Only PBKDF2 (0) and Argon2id (1) are supported".to_string(),
+            ));
+        }
     }
 
     Ok(())
@@ -53,11 +95,11 @@ pub async fn prelogin(
         .ok_or_else(|| AppError::BadRequest("Missing email".to_string()))?;
     let db = db::get_db(&env)?;
 
-    let stmt = db.prepare("SELECT kdf_type, kdf_iterations FROM users WHERE email = ?1");
+    let stmt = db.prepare("SELECT kdf_type, kdf_iterations, kdf_memory, kdf_parallelism FROM users WHERE email = ?1");
     let query = stmt.bind(&[email.into()])?;
     let row: Option<Value> = query.first(None).await.map_err(|_| AppError::Database)?;
 
-    let (kdf_type, kdf_iterations) = if let Some(row) = row {
+    let (kdf_type, kdf_iterations, kdf_memory, kdf_parallelism) = if let Some(row) = row {
         let kdf_type = row
             .get("kdf_type")
             .and_then(|value| value.as_i64())
@@ -66,14 +108,24 @@ pub async fn prelogin(
             .get("kdf_iterations")
             .and_then(|value| value.as_i64())
             .map(|value| value as i32);
-        (kdf_type, kdf_iterations)
+        let kdf_memory = row
+            .get("kdf_memory")
+            .and_then(|value| value.as_i64())
+            .map(|value| value as i32);
+        let kdf_parallelism = row
+            .get("kdf_parallelism")
+            .and_then(|value| value.as_i64())
+            .map(|value| value as i32);
+        (kdf_type, kdf_iterations, kdf_memory, kdf_parallelism)
     } else {
-        (None, None)
+        (None, None, None, None)
     };
 
     Ok(Json(PreloginResponse {
-        kdf: kdf_type.unwrap_or(SUPPORTED_KDF_TYPE),
+        kdf: kdf_type.unwrap_or(KDF_TYPE_PBKDF2),
         kdf_iterations: kdf_iterations.unwrap_or(DEFAULT_PBKDF2_ITERATIONS),
+        kdf_memory,
+        kdf_parallelism,
     }))
 }
 
@@ -96,7 +148,12 @@ pub async fn register(
         return Err(AppError::Unauthorized("Not allowed to signup".to_string()));
     }
 
-    ensure_supported_kdf(payload.kdf, payload.kdf_iterations)?;
+    ensure_supported_kdf(
+        payload.kdf,
+        payload.kdf_iterations,
+        payload.kdf_memory,
+        payload.kdf_parallelism,
+    )?;
 
     // Generate salt and hash the password with server-side PBKDF2
     let password_salt = generate_salt()?;
@@ -118,6 +175,8 @@ pub async fn register(
         public_key: payload.user_asymmetric_keys.public_key,
         kdf_type: payload.kdf,
         kdf_iterations: payload.kdf_iterations,
+        kdf_memory: payload.kdf_memory,
+        kdf_parallelism: payload.kdf_parallelism,
         security_stamp: Uuid::new_v4().to_string(),
         created_at: now.clone(),
         updated_at: now,
@@ -125,8 +184,8 @@ pub async fn register(
 
     query!(
         &db,
-        "INSERT INTO users (id, name, email, master_password_hash, master_password_hint, password_salt, key, private_key, public_key, kdf_type, kdf_iterations, security_stamp, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+        "INSERT INTO users (id, name, email, master_password_hash, master_password_hint, password_salt, key, private_key, public_key, kdf_type, kdf_iterations, kdf_memory, kdf_parallelism, security_stamp, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
          user.id,
          user.name,
          user.email,
@@ -138,6 +197,8 @@ pub async fn register(
          user.public_key,
          user.kdf_type,
          user.kdf_iterations,
+         user.kdf_memory,
+         user.kdf_parallelism,
          user.security_stamp,
          user.created_at,
          user.updated_at
@@ -349,8 +410,13 @@ pub async fn post_rotatekey(
         ));
     }
 
-    // Only PBKDF2 is supported since Argon2-specific columns are not present in our schema.
-    ensure_supported_kdf(unlock_data.kdf_type, unlock_data.kdf_iterations)?;
+    // Validate KDF parameters
+    ensure_supported_kdf(
+        unlock_data.kdf_type,
+        unlock_data.kdf_iterations,
+        unlock_data.kdf_memory,
+        unlock_data.kdf_parallelism,
+    )?;
 
     // Validate data integrity using D1 batch operations
     // Step 1: Ensure all personal ciphers have id (required for key rotation)
@@ -513,13 +579,111 @@ pub async fn post_rotatekey(
     // Update user record with new keys and password
     query!(
         &db,
-        "UPDATE users SET master_password_hash = ?1, password_salt = ?2, key = ?3, private_key = ?4, kdf_type = ?5, kdf_iterations = ?6, security_stamp = ?7, updated_at = ?8 WHERE id = ?9",
+        "UPDATE users SET master_password_hash = ?1, password_salt = ?2, key = ?3, private_key = ?4, kdf_type = ?5, kdf_iterations = ?6, kdf_memory = ?7, kdf_parallelism = ?8, security_stamp = ?9, updated_at = ?10 WHERE id = ?11",
         new_hashed_password,
         new_salt,
         unlock_data.master_key_encrypted_user_key,
         payload.account_keys.user_key_encrypted_account_private_key,
         unlock_data.kdf_type,
         unlock_data.kdf_iterations,
+        unlock_data.kdf_memory,
+        unlock_data.kdf_parallelism,
+        new_security_stamp,
+        now,
+        user_id
+    )
+    .map_err(|_| AppError::Database)?
+    .run()
+    .await?;
+
+    Ok(Json(json!({})))
+}
+
+/// POST /accounts/kdf - Change KDF settings (PBKDF2 <-> Argon2id)
+#[worker::send]
+pub async fn post_kdf(
+    claims: Claims,
+    State(env): State<Arc<Env>>,
+    Json(payload): Json<ChangeKdfRequest>,
+) -> Result<Json<Value>, AppError> {
+    let db = db::get_db(&env)?;
+    let user_id = &claims.sub;
+
+    // Get the user from the database
+    let user: Value = db
+        .prepare("SELECT * FROM users WHERE id = ?1")
+        .bind(&[user_id.clone().into()])?
+        .first(None)
+        .await
+        .map_err(|_| AppError::Database)?
+        .ok_or_else(|| AppError::NotFound("User not found".to_string()))?;
+    let user: User = serde_json::from_value(user).map_err(|_| AppError::Internal)?;
+
+    // Verify the current master password
+    let verification = user
+        .verify_master_password(&payload.master_password_hash)
+        .await?;
+
+    if !verification.is_valid() {
+        return Err(AppError::Unauthorized("Invalid password".to_string()));
+    }
+
+    // Validate that KDF settings match between authentication and unlock data
+    if payload.authentication_data.kdf != payload.unlock_data.kdf {
+        return Err(AppError::BadRequest(
+            "KDF settings must be equal for authentication and unlock".to_string(),
+        ));
+    }
+
+    // Validate that salt (email) matches
+    if user.email != payload.authentication_data.salt
+        || user.email != payload.unlock_data.salt
+    {
+        return Err(AppError::BadRequest(
+            "Invalid master password salt".to_string(),
+        ));
+    }
+
+    // Validate new KDF parameters
+    let kdf = &payload.unlock_data.kdf;
+    ensure_supported_kdf(
+        kdf.kdf,
+        kdf.kdf_iterations,
+        kdf.kdf_memory,
+        kdf.kdf_parallelism,
+    )?;
+
+    // Generate new salt and hash the new password
+    let new_salt = generate_salt()?;
+    let new_hashed_password = hash_password_for_storage(
+        &payload.authentication_data.master_password_authentication_hash,
+        &new_salt,
+    )
+    .await?;
+
+    // Generate new security stamp
+    let new_security_stamp = Uuid::new_v4().to_string();
+    let now = Utc::now().to_rfc3339();
+
+    // Determine kdf_memory and kdf_parallelism based on KDF type
+    let (kdf_memory, kdf_parallelism) = if kdf.kdf == KDF_TYPE_ARGON2ID {
+        (kdf.kdf_memory, kdf.kdf_parallelism)
+    } else {
+        // For PBKDF2, clear these fields
+        (None, None)
+    };
+
+    // Update user record with new KDF settings and password
+    query!(
+        &db,
+        "UPDATE users SET master_password_hash = ?1, password_salt = ?2, key = ?3, kdf_type = ?4, kdf_iterations = ?5, kdf_memory = ?6, kdf_parallelism = ?7, security_stamp = ?8, updated_at = ?9 WHERE id = ?10",
+        new_hashed_password,
+        new_salt,
+        payload.unlock_data.master_key_wrapped_user_key,
+        kdf.kdf,
+        kdf.kdf_iterations,
+        kdf_memory,
+        kdf_parallelism,
         new_security_stamp,
         now,
         user_id

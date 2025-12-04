@@ -18,6 +18,8 @@ pub struct User {
     pub public_key: String,
     pub kdf_type: i32,
     pub kdf_iterations: i32,
+    pub kdf_memory: Option<i32>,      // Argon2 memory parameter (15-1024 MB)
+    pub kdf_parallelism: Option<i32>, // Argon2 parallelism parameter (1-16)
     pub security_stamp: String,
     pub created_at: String,
     pub updated_at: String,
@@ -103,6 +105,10 @@ mod bool_from_int {
 pub struct PreloginResponse {
     pub kdf: i32,
     pub kdf_iterations: i32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kdf_memory: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kdf_parallelism: Option<i32>,
 }
 
 // For /accounts/register request
@@ -117,6 +123,8 @@ pub struct RegisterRequest {
     pub user_asymmetric_keys: KeyData,
     pub kdf: i32,
     pub kdf_iterations: i32,
+    pub kdf_memory: Option<i32>,      // Argon2 memory parameter (15-1024 MB)
+    pub kdf_parallelism: Option<i32>, // Argon2 parallelism parameter (1-16)
 }
 
 #[derive(Debug, Deserialize)]
@@ -143,6 +151,44 @@ pub struct ChangePasswordRequest {
     pub new_master_password_hash: String,
     pub master_password_hint: Option<String>,
     pub key: String,
+}
+
+// For POST /accounts/kdf request - Change KDF settings
+#[derive(Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct KdfData {
+    #[serde(alias = "kdfType")]
+    pub kdf: i32,
+    #[serde(alias = "iterations")]
+    pub kdf_iterations: i32,
+    #[serde(alias = "memory")]
+    pub kdf_memory: Option<i32>,
+    #[serde(alias = "parallelism")]
+    pub kdf_parallelism: Option<i32>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthenticationData {
+    pub salt: String,
+    pub kdf: KdfData,
+    pub master_password_authentication_hash: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UnlockData {
+    pub salt: String,
+    pub kdf: KdfData,
+    pub master_key_wrapped_user_key: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChangeKdfRequest {
+    pub master_password_hash: String,
+    pub authentication_data: AuthenticationData,
+    pub unlock_data: UnlockData,
 }
 
 // For POST /accounts/key-management/rotate-user-account-keys request
