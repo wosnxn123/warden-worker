@@ -1,6 +1,7 @@
 use super::get_batch_size;
 use axum::{extract::State, Json};
-use chrono::Utc;
+use chrono::{DateTime, Utc};
+use log; // Used for warning logs on parse failures
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::Arc;
@@ -116,6 +117,43 @@ pub async fn update_cipher(
     .await?
     .ok_or(AppError::NotFound("Cipher not found".to_string()))?;
 
+    // Validate folder ownership if provided
+    if let Some(ref folder_id) = payload.folder_id {
+        let folder_exists: Option<serde_json::Value> = db
+            .prepare("SELECT id FROM folders WHERE id = ?1 AND user_id = ?2")
+            .bind(&[folder_id.clone().into(), claims.sub.clone().into()])?
+            .first(None)
+            .await?;
+
+        if folder_exists.is_none() {
+            return Err(AppError::BadRequest(
+                "Invalid folder: Folder does not exist or belongs to another user".to_string(),
+            ));
+        }
+    }
+
+    // Reject updates based on stale client data when the last known revision is provided
+    if let Some(dt) = payload.last_known_revision_date.as_deref() {
+        match DateTime::parse_from_rfc3339(dt) {
+            Ok(client_dt) => match DateTime::parse_from_rfc3339(&existing_cipher.updated_at) {
+                Ok(server_dt) => {
+                    if server_dt.signed_duration_since(client_dt).num_seconds() > 1 {
+                        return Err(AppError::BadRequest(
+                            "The client copy of this cipher is out of date. Resync the client and try again.".to_string(),
+                        ));
+                    }
+                }
+                Err(err) => log::warn!(
+                    "Error parsing server revisionDate '{}' for cipher {}: {}",
+                    existing_cipher.updated_at,
+                    existing_cipher.id,
+                    err
+                ),
+            },
+            Err(err) => log::warn!("Error parsing lastKnownRevisionDate '{}': {}", dt, err),
+        }
+    }
+    
     let cipher_data_req = payload;
 
     let cipher_data = CipherData {
