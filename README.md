@@ -36,6 +36,8 @@ Warden aims to solve this problem by leveraging the Cloudflare Workers ecosystem
 
 There are no immediate plans to implement these features. The primary goal of this project is to provide a simple, free, and low-maintenance personal password manager.
 
+Attachments are **not yet implemented**. They will be added later using Cloudflare R2; for now, attachment upload/download endpoints are not available.
+
 ## Compatibility
 
 *   **Browser Extensions:** Chrome, Firefox, Safari, etc. (Tested 2025.11.1 on Chrome)

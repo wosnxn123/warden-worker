@@ -1,7 +1,7 @@
 use super::get_batch_size;
 use axum::{extract::State, Json};
 use chrono::Utc;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -10,9 +10,23 @@ use worker::{query, D1PreparedStatement, Env};
 use crate::auth::Claims;
 use crate::db;
 use crate::error::AppError;
-use crate::models::cipher::{Cipher, CipherData, CipherRequestData, CreateCipherRequest, MoveCipherData};
+use crate::models::cipher::{Cipher, CipherData, CipherDBModel, CipherListResponse, CipherRequestData, CreateCipherRequest, MoveCipherData, PartialCipherData};
 use crate::models::user::{PasswordOrOtpData, User};
 use axum::extract::Path;
+
+/// Helper to fetch a cipher by id for a user or return NotFound.
+async fn fetch_cipher_for_user(
+    db: &worker::D1Database,
+    cipher_id: &str,
+    user_id: &str,
+) -> Result<CipherDBModel, AppError> {
+    db.prepare("SELECT * FROM ciphers WHERE id = ?1 AND user_id = ?2")
+        .bind(&[cipher_id.to_string().into(), user_id.to_string().into()])?
+        .first(None)
+        .await
+        .map_err(|_| AppError::Database)?
+        .ok_or_else(|| AppError::NotFound("Cipher not found".to_string()))
+}
 
 #[worker::send]
 pub async fn create_cipher(
@@ -150,6 +164,107 @@ pub async fn update_cipher(
     db::touch_user_updated_at(&db, &claims.sub).await?;
 
     Ok(Json(cipher))
+}
+
+/// GET /api/ciphers - list all non-trashed ciphers for current user
+#[worker::send]
+pub async fn list_ciphers(
+    claims: Claims,
+    State(env): State<Arc<Env>>,
+) -> Result<Json<CipherListResponse>, AppError> {
+    let db = db::get_db(&env)?;
+
+    let ciphers_db: Vec<CipherDBModel> = db
+        .prepare(
+            "SELECT * FROM ciphers 
+             WHERE user_id = ?1 AND deleted_at IS NULL 
+             ORDER BY updated_at DESC",
+        )
+        .bind(&[claims.sub.clone().into()])?
+        .all()
+        .await?
+        .results()?;
+
+    let ciphers: Vec<Cipher> = ciphers_db.into_iter().map(|c| c.into()).collect();
+
+    Ok(Json(CipherListResponse {
+        data: ciphers,
+        object: "list".to_string(),
+        continuation_token: None,
+    }))
+}
+
+/// GET /api/ciphers/{id}
+#[worker::send]
+pub async fn get_cipher(
+    claims: Claims,
+    State(env): State<Arc<Env>>,
+    Path(id): Path<String>,
+) -> Result<Json<Cipher>, AppError> {
+    let db = db::get_db(&env)?;
+    let cipher = fetch_cipher_for_user(&db, &id, &claims.sub).await?;
+    Ok(Json(cipher.into()))
+}
+
+/// GET /api/ciphers/{id}/details
+#[worker::send]
+pub async fn get_cipher_details(
+    claims: Claims,
+    state: State<Arc<Env>>,
+    id: Path<String>,
+) -> Result<Json<Cipher>, AppError> {
+    get_cipher(claims, state, id).await
+}
+
+/// PUT/POST /api/ciphers/{id}/partial
+#[worker::send]
+pub async fn update_cipher_partial(
+    claims: Claims,
+    State(env): State<Arc<Env>>,
+    Path(id): Path<String>,
+    Json(payload): Json<PartialCipherData>,
+) -> Result<Json<Cipher>, AppError> {
+    let db = db::get_db(&env)?;
+    let user_id = &claims.sub;
+
+    // Validate folder ownership if provided
+    if let Some(ref folder_id) = payload.folder_id {
+        let folder_exists: Option<serde_json::Value> = db
+            .prepare("SELECT id FROM folders WHERE id = ?1 AND user_id = ?2")
+            .bind(&[folder_id.clone().into(), user_id.clone().into()])?
+            .first(None)
+            .await?;
+
+        if folder_exists.is_none() {
+            return Err(AppError::BadRequest(
+                "Invalid folder: Folder does not exist or belongs to another user".to_string(),
+            ));
+        }
+    }
+
+    // Ensure cipher exists and belongs to user
+    fetch_cipher_for_user(&db, &id, user_id).await?;
+
+    let now = Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
+
+    query!(
+        &db,
+        "UPDATE ciphers SET folder_id = ?1, favorite = ?2, updated_at = ?3 WHERE id = ?4 AND user_id = ?5",
+        payload.folder_id,
+        payload.favorite,
+        now,
+        id,
+        user_id,
+    )
+    .map_err(|_| AppError::Database)?
+    .run()
+    .await?;
+
+    db::touch_user_updated_at(&db, user_id).await?;
+
+    let cipher = fetch_cipher_for_user(&db, &id, user_id).await?;
+
+    Ok(Json(cipher.into()))
 }
 
 /// Request body for bulk cipher operations

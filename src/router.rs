@@ -40,10 +40,14 @@ pub fn api_router(env: Env) -> Router {
             post(accounts::post_rotatekey),
         )
         // Ciphers CRUD
+        .route("/api/ciphers", get(ciphers::list_ciphers))
         .route("/api/ciphers", post(ciphers::create_cipher_simple))
         .route("/api/ciphers/create", post(ciphers::create_cipher))
         .route("/api/ciphers/import", post(import::import_data))
+        .route("/api/ciphers/{id}", get(ciphers::get_cipher))
+        .route("/api/ciphers/{id}/details", get(ciphers::get_cipher_details))
         .route("/api/ciphers/{id}", put(ciphers::update_cipher))
+        .route("/api/ciphers/{id}", post(ciphers::update_cipher))
         // Cipher soft delete (PUT sets deleted_at timestamp)
         .route("/api/ciphers/{id}/delete", put(ciphers::soft_delete_cipher))
         // Cipher hard delete (DELETE/POST permanently removes cipher)
@@ -51,6 +55,15 @@ pub fn api_router(env: Env) -> Router {
         .route(
             "/api/ciphers/{id}/delete",
             post(ciphers::hard_delete_cipher),
+        )
+        // Partial update for folder/favorite
+        .route(
+            "/api/ciphers/{id}/partial",
+            put(ciphers::update_cipher_partial),
+        )
+        .route(
+            "/api/ciphers/{id}/partial",
+            post(ciphers::update_cipher_partial),
         )
         // Cipher bulk soft delete
         .route(
