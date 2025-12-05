@@ -20,7 +20,7 @@ use crate::{
         cipher::CipherData,
         sync::Profile,
         user::{
-            ChangeKdfRequest, ChangePasswordRequest, DeleteAccountRequest, PreloginResponse,
+            ChangeKdfRequest, ChangePasswordRequest, PasswordOrOtpData, PreloginResponse,
             RegisterRequest, RotateKeyRequest, User,
         },
     },
@@ -314,7 +314,7 @@ pub async fn get_profile(
 pub async fn delete_account(
     claims: Claims,
     State(env): State<Arc<Env>>,
-    Json(payload): Json<DeleteAccountRequest>,
+    Json(payload): Json<PasswordOrOtpData>,
 ) -> Result<Json<Value>, AppError> {
     let db = db::get_db(&env)?;
     let user_id = &claims.sub;

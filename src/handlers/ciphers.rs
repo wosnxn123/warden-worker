@@ -2,6 +2,7 @@ use super::get_batch_size;
 use axum::{extract::State, Json};
 use chrono::Utc;
 use serde::Deserialize;
+use serde_json::Value;
 use std::sync::Arc;
 use uuid::Uuid;
 use worker::{query, D1PreparedStatement, Env};
@@ -10,6 +11,7 @@ use crate::auth::Claims;
 use crate::db;
 use crate::error::AppError;
 use crate::models::cipher::{Cipher, CipherData, CipherRequestData, CreateCipherRequest};
+use crate::models::user::{PasswordOrOtpData, User};
 use axum::extract::Path;
 
 #[worker::send]
@@ -439,4 +441,58 @@ pub async fn create_cipher_simple(
     db::touch_user_updated_at(&db, &claims.sub).await?;
 
     Ok(Json(cipher))
+}
+
+/// Purge the user's vault - delete all ciphers and folders
+/// POST /api/ciphers/purge
+///
+/// This is a destructive operation that requires password verification.
+/// In vaultwarden, this endpoint also supports purging organization vaults,
+/// but this simplified version only supports personal vault purge.
+#[worker::send]
+pub async fn purge_vault(
+    claims: Claims,
+    State(env): State<Arc<Env>>,
+    Json(payload): Json<PasswordOrOtpData>,
+) -> Result<Json<()>, AppError> {
+    let db = db::get_db(&env)?;
+    let user_id = &claims.sub;
+
+    // Get the user from the database
+    let user: Value = db
+        .prepare("SELECT * FROM users WHERE id = ?1")
+        .bind(&[user_id.clone().into()])?
+        .first(None)
+        .await
+        .map_err(|_| AppError::Database)?
+        .ok_or_else(|| AppError::NotFound("User not found".to_string()))?;
+    let user: User = serde_json::from_value(user).map_err(|_| AppError::Internal)?;
+
+    // Validate password (OTP not supported in this simplified version)
+    let provided_hash = payload
+        .master_password_hash
+        .ok_or_else(|| AppError::BadRequest("Missing master password hash".to_string()))?;
+
+    let verification = user.verify_master_password(&provided_hash).await?;
+
+    if !verification.is_valid() {
+        return Err(AppError::Unauthorized("Invalid password".to_string()));
+    }
+
+    // Delete all user's ciphers (both active and soft-deleted)
+    query!(&db, "DELETE FROM ciphers WHERE user_id = ?1", user_id)
+        .map_err(|_| AppError::Database)?
+        .run()
+        .await?;
+
+    // Delete all user's folders
+    query!(&db, "DELETE FROM folders WHERE user_id = ?1", user_id)
+        .map_err(|_| AppError::Database)?
+        .run()
+        .await?;
+
+    // Update user's revision date to trigger client sync
+    db::touch_user_updated_at(&db, user_id).await?;
+
+    Ok(Json(()))
 }

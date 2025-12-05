@@ -67,6 +67,8 @@ pub fn api_router(env: Env) -> Router {
         .route("/api/ciphers/{id}/restore", put(ciphers::restore_cipher))
         // Cipher bulk restore
         .route("/api/ciphers/restore", put(ciphers::restore_ciphers_bulk))
+        // Purge vault - delete all ciphers and folders (requires password verification)
+        .route("/api/ciphers/purge", post(ciphers::purge_vault))
         // Folders CRUD
         .route("/api/folders", post(folders::create_folder))
         .route("/api/folders/{id}", put(folders::update_folder))

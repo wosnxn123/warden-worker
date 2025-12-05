@@ -134,10 +134,12 @@ pub struct KeyData {
     pub encrypted_private_key: String,
 }
 
-// For DELETE /accounts request
+/// Request body for password-protected operations (delete account, purge vault, etc.)
+/// Supports both master password hash and OTP verification.
+/// Note: OTP verification is not implemented in this simplified version.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct DeleteAccountRequest {
+pub struct PasswordOrOtpData {
     #[serde(alias = "MasterPasswordHash")]
     pub master_password_hash: Option<String>,
     pub otp: Option<String>,
