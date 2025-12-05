@@ -312,3 +312,11 @@ pub struct CreateCipherRequest {
     #[serde(alias = "CollectionIds")]
     pub collection_ids: Vec<String>,
 }
+
+/// Request body for moving ciphers to a folder
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MoveCipherData {
+    pub folder_id: Option<String>,
+    pub ids: Vec<String>,
+}
