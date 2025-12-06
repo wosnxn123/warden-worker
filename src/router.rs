@@ -27,6 +27,9 @@ pub fn api_router(env: Env) -> Router {
         // For on-demand sync checks
         .route("/api/accounts/revision-date", get(accounts::revision_date))
         .route("/api/accounts/profile", get(accounts::get_profile))
+        .route("/api/accounts/profile", post(accounts::post_profile))
+        .route("/api/accounts/profile", put(accounts::put_profile))
+        .route("/api/accounts/avatar", put(accounts::put_avatar))
         // Delete account
         .route("/api/accounts", delete(accounts::delete_account))
         .route("/api/accounts/delete", post(accounts::delete_account))

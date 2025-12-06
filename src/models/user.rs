@@ -7,6 +7,7 @@ use crate::{crypto::verify_password, error::AppError};
 pub struct User {
     pub id: String,
     pub name: Option<String>,
+    pub avatar_color: Option<String>,
     pub email: String,
     #[serde(with = "bool_from_int")]
     pub email_verified: bool,
@@ -320,4 +321,16 @@ pub struct RotateFolderData {
     // See: https://github.com/bitwarden/clients/issues/8453
     pub id: Option<String>,
     pub name: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileData {
+    pub name: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AvatarData {
+    pub avatar_color: Option<String>,
 }

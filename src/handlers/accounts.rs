@@ -21,7 +21,7 @@ use crate::{
         sync::Profile,
         user::{
             ChangeKdfRequest, ChangePasswordRequest, PasswordOrOtpData, PreloginResponse,
-            RegisterRequest, RotateKeyRequest, User,
+            RegisterRequest, RotateKeyRequest, User, ProfileData, AvatarData,
         },
     },
 };
@@ -212,6 +212,7 @@ pub async fn register(
     let user = User {
         id: Uuid::new_v4().to_string(),
         name: payload.name,
+        avatar_color: None,
         email: payload.email.to_lowercase(),
         email_verified: false,
         master_password_hash: hashed_password,
@@ -306,6 +307,110 @@ pub async fn get_profile(
         .first(None)
         .await?
         .ok_or_else(|| AppError::NotFound("User not found".to_string()))?;
+
+    let profile = Profile::from_user(user)?;
+
+    Ok(Json(profile))
+}
+
+#[worker::send]
+pub async fn post_profile(
+    claims: Claims,
+    State(env): State<Arc<Env>>,
+    Json(payload): Json<ProfileData>,
+) -> Result<Json<Profile>, AppError> {
+    if payload.name.len() > 50 {
+        return Err(AppError::BadRequest(
+            "The field Name must be a string with a maximum length of 50.".to_string(),
+        ));
+    }
+
+    let db = db::get_db(&env)?;
+    let user_id = &claims.sub;
+
+    let user_value: Value = db
+        .prepare("SELECT * FROM users WHERE id = ?1")
+        .bind(&[user_id.clone().into()])?
+        .first(None)
+        .await
+        .map_err(|_| AppError::Database)?
+        .ok_or_else(|| AppError::NotFound("User not found".to_string()))?;
+
+    let mut user: User = serde_json::from_value(user_value).map_err(|_| AppError::Internal)?;
+    let now = Utc::now().to_rfc3339();
+
+    user.name = Some(payload.name);
+    user.updated_at = now.clone();
+
+    query!(
+        &db,
+        "UPDATE users SET name = ?1, updated_at = ?2 WHERE id = ?3",
+        user.name,
+        now,
+        user_id
+    )
+    .map_err(|_| AppError::Database)?
+    .run()
+    .await
+    .map_err(|_| AppError::Database)?;
+
+    let profile = Profile::from_user(user)?;
+
+    Ok(Json(profile))
+}
+
+#[worker::send]
+pub async fn put_profile(
+    claims: Claims,
+    state: State<Arc<Env>>,
+    json: Json<ProfileData>,
+) -> Result<Json<Profile>, AppError> {
+    post_profile(claims, state, json).await
+}
+
+#[worker::send]
+pub async fn put_avatar(
+    claims: Claims,
+    State(env): State<Arc<Env>>,
+    Json(payload): Json<AvatarData>,
+) -> Result<Json<Profile>, AppError> {
+    if let Some(color) = &payload.avatar_color {
+        if color.len() != 7 {
+            return Err(AppError::BadRequest(
+                "The field AvatarColor must be a HTML/Hex color code with a length of 7 characters"
+                    .to_string(),
+            ));
+        }
+    }
+
+    let db = db::get_db(&env)?;
+    let user_id = &claims.sub;
+
+    let user_value: Value = db
+        .prepare("SELECT * FROM users WHERE id = ?1")
+        .bind(&[user_id.clone().into()])?
+        .first(None)
+        .await
+        .map_err(|_| AppError::Database)?
+        .ok_or_else(|| AppError::NotFound("User not found".to_string()))?;
+
+    let mut user: User = serde_json::from_value(user_value).map_err(|_| AppError::Internal)?;
+    let now = Utc::now().to_rfc3339();
+
+    user.avatar_color = payload.avatar_color;
+    user.updated_at = now.clone();
+
+    query!(
+        &db,
+        "UPDATE users SET avatar_color = ?1, updated_at = ?2 WHERE id = ?3",
+        user.avatar_color,
+        now,
+        user_id
+    )
+    .map_err(|_| AppError::Database)?
+    .run()
+    .await
+    .map_err(|_| AppError::Database)?;
 
     let profile = Profile::from_user(user)?;
 
