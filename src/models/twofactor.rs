@@ -169,7 +169,8 @@ impl RememberTokenData {
     pub fn remove_expired(&mut self) {
         let now = Utc::now().timestamp();
         let expiration_seconds = Duration::days(REMEMBER_TOKEN_EXPIRATION_DAYS).num_seconds();
-        self.tokens.retain(|t| now - t.created_at < expiration_seconds);
+        self.tokens
+            .retain(|t| now - t.created_at < expiration_seconds);
     }
 
     /// Validate a token for a specific device
@@ -177,11 +178,9 @@ impl RememberTokenData {
     pub fn validate(&self, device_id: &str, token: &str) -> bool {
         let now = Utc::now().timestamp();
         let expiration_seconds = Duration::days(REMEMBER_TOKEN_EXPIRATION_DAYS).num_seconds();
-        
+
         self.tokens.iter().any(|t| {
-            t.device_id == device_id 
-                && t.token == token 
-                && now - t.created_at < expiration_seconds
+            t.device_id == device_id && t.token == token && now - t.created_at < expiration_seconds
         })
     }
 
@@ -190,7 +189,7 @@ impl RememberTokenData {
     pub fn upsert(&mut self, device_id: String, token: String) {
         // Remove existing token for this device
         self.tokens.retain(|t| t.device_id != device_id);
-        
+
         // Add new token
         self.tokens.push(RememberTokenEntry {
             device_id,
@@ -203,6 +202,8 @@ impl RememberTokenData {
     pub fn has_valid_tokens(&self) -> bool {
         let now = Utc::now().timestamp();
         let expiration_seconds = Duration::days(REMEMBER_TOKEN_EXPIRATION_DAYS).num_seconds();
-        self.tokens.iter().any(|t| now - t.created_at < expiration_seconds)
+        self.tokens
+            .iter()
+            .any(|t| now - t.created_at < expiration_seconds)
     }
 }

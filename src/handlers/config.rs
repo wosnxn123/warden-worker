@@ -31,7 +31,7 @@ pub async fn config(
     // feature_states.insert("unauth-ui-refresh".to_string(), true);
     // feature_states.insert("enable-pm-flight-recorder".to_string(), true);
     // feature_states.insert("mobile-error-reporting".to_string(), true);
-    
+
     let disable_user_registration = get_disable_user_registration(&env);
 
     Json(json!({

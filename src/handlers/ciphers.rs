@@ -2,7 +2,7 @@ use super::get_batch_size;
 use axum::{extract::State, Json};
 use chrono::{DateTime, Utc};
 use log; // Used for warning logs on parse failures
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -11,7 +11,10 @@ use worker::{query, D1PreparedStatement, Env};
 use crate::auth::Claims;
 use crate::db;
 use crate::error::AppError;
-use crate::models::cipher::{Cipher, CipherData, CipherDBModel, CipherListResponse, CipherRequestData, CreateCipherRequest, MoveCipherData, PartialCipherData};
+use crate::models::cipher::{
+    Cipher, CipherDBModel, CipherData, CipherListResponse, CipherRequestData, CreateCipherRequest,
+    MoveCipherData, PartialCipherData,
+};
 use crate::models::user::{PasswordOrOtpData, User};
 use axum::extract::Path;
 
@@ -153,7 +156,7 @@ pub async fn update_cipher(
             Err(err) => log::warn!("Error parsing lastKnownRevisionDate '{}': {}", dt, err),
         }
     }
-    
+
     let cipher_data_req = payload;
 
     let cipher_data = CipherData {
@@ -515,7 +518,9 @@ pub async fn restore_ciphers_bulk(
     let ids_json = serde_json::to_string(&ids).map_err(|_| AppError::Internal)?;
 
     let restored_ciphers: Vec<Cipher> = db
-        .prepare("SELECT * FROM ciphers WHERE user_id = ?1 AND id IN (SELECT value FROM json_each(?2))")
+        .prepare(
+            "SELECT * FROM ciphers WHERE user_id = ?1 AND id IN (SELECT value FROM json_each(?2))",
+        )
         .bind(&[claims.sub.clone().into(), ids_json.into()])?
         .all()
         .await?

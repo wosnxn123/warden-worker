@@ -21,8 +21,7 @@ use crate::{
 pub async fn get_twofactor(
     State(env): State<Arc<Env>>,
     AuthUser(user_id, _): AuthUser,
-)
--> Result<Json<Value>, AppError> {
+) -> Result<Json<Value>, AppError> {
     let db = db::get_db(&env)?;
 
     let twofactors: Vec<Value> = db
@@ -50,8 +49,7 @@ pub async fn get_authenticator(
     State(env): State<Arc<Env>>,
     AuthUser(user_id, _): AuthUser,
     Json(data): Json<PasswordOrOtpData>,
-)
--> Result<Json<Value>, AppError> {
+) -> Result<Json<Value>, AppError> {
     let db = db::get_db(&env)?;
 
     // Verify master password
@@ -69,7 +67,10 @@ pub async fn get_authenticator(
     // Check if TOTP is already configured
     let existing: Option<Value> = db
         .prepare("SELECT * FROM twofactor WHERE user_uuid = ?1 AND atype = ?2")
-        .bind(&[user_id.clone().into(), (TwoFactorType::Authenticator as i32).into()])?
+        .bind(&[
+            user_id.clone().into(),
+            (TwoFactorType::Authenticator as i32).into(),
+        ])?
         .first(None)
         .await
         .map_err(|_| AppError::Database)?;
@@ -95,8 +96,7 @@ pub async fn activate_authenticator(
     State(env): State<Arc<Env>>,
     AuthUser(user_id, _): AuthUser,
     Json(data): Json<EnableAuthenticatorData>,
-)
--> Result<Json<Value>, AppError> {
+) -> Result<Json<Value>, AppError> {
     let db = db::get_db(&env)?;
 
     // Verify master password
@@ -129,7 +129,10 @@ pub async fn activate_authenticator(
     // Check if TOTP is already configured - reuse existing record for replay protection
     let existing: Option<TwoFactor> = db
         .prepare("SELECT * FROM twofactor WHERE user_uuid = ?1 AND atype = ?2")
-        .bind(&[user_id.clone().into(), (TwoFactorType::Authenticator as i32).into()])?
+        .bind(&[
+            user_id.clone().into(),
+            (TwoFactorType::Authenticator as i32).into(),
+        ])?
         .first(None)
         .await
         .map_err(|_| AppError::Database)?
@@ -191,8 +194,7 @@ pub async fn activate_authenticator_put(
     state: State<Arc<Env>>,
     auth_user: AuthUser,
     json: Json<EnableAuthenticatorData>,
-)
--> Result<Json<Value>, AppError> {
+) -> Result<Json<Value>, AppError> {
     activate_authenticator(state, auth_user, json).await
 }
 
@@ -202,8 +204,7 @@ pub async fn disable_twofactor(
     State(env): State<Arc<Env>>,
     AuthUser(user_id, _): AuthUser,
     Json(data): Json<DisableTwoFactorData>,
-)
--> Result<Json<Value>, AppError> {
+) -> Result<Json<Value>, AppError> {
     let db = db::get_db(&env)?;
 
     // Verify master password
@@ -249,7 +250,6 @@ pub async fn disable_twofactor(
         "object": "twoFactorProvider"
     })))
 }
-
 
 /// DELETE /api/two-factor/authenticator - Disable TOTP with key verification
 #[worker::send]
@@ -304,17 +304,17 @@ pub async fn disable_authenticator(
         ));
     }
 
-    query!(
-        &db,
-        "DELETE FROM twofactor WHERE uuid = ?1",
-        &tf.uuid
-    )
-    .map_err(|_| AppError::Database)?
-    .run()
-    .await
-    .map_err(|_| AppError::Database)?;
+    query!(&db, "DELETE FROM twofactor WHERE uuid = ?1", &tf.uuid)
+        .map_err(|_| AppError::Database)?
+        .run()
+        .await
+        .map_err(|_| AppError::Database)?;
 
-    log::info!("User {} disabled authenticator (2FA type {})", user_id, data.r#type);
+    log::info!(
+        "User {} disabled authenticator (2FA type {})",
+        user_id,
+        data.r#type
+    );
 
     clear_recovery_if_no_twofactor(&db, &user_id).await?;
 
@@ -331,8 +331,7 @@ pub async fn disable_twofactor_put(
     state: State<Arc<Env>>,
     auth_user: AuthUser,
     json: Json<DisableTwoFactorData>,
-)
--> Result<Json<Value>, AppError> {
+) -> Result<Json<Value>, AppError> {
     disable_twofactor(state, auth_user, json).await
 }
 
@@ -342,8 +341,7 @@ pub async fn get_recover(
     State(env): State<Arc<Env>>,
     AuthUser(user_id, _): AuthUser,
     Json(data): Json<PasswordOrOtpData>,
-)
--> Result<Json<Value>, AppError> {
+) -> Result<Json<Value>, AppError> {
     let db = db::get_db(&env)?;
 
     // Verify master password
@@ -369,8 +367,7 @@ pub async fn get_recover(
 pub async fn recover(
     State(env): State<Arc<Env>>,
     Json(data): Json<RecoverTwoFactor>,
-)
--> Result<Json<Value>, AppError> {
+) -> Result<Json<Value>, AppError> {
     let db = db::get_db(&env)?;
 
     // Get user by email
@@ -384,7 +381,9 @@ pub async fn recover(
     let user: User = serde_json::from_value(user_value).map_err(|_| AppError::Internal)?;
 
     // Verify master password
-    let verification = user.verify_master_password(&data.master_password_hash).await?;
+    let verification = user
+        .verify_master_password(&data.master_password_hash)
+        .await?;
     if !verification.is_valid() {
         return Err(AppError::Unauthorized(
             "Username or password is incorrect".to_string(),
@@ -393,7 +392,10 @@ pub async fn recover(
 
     // Check recovery code (case-insensitive)
     let is_valid = user.totp_recover.as_ref().map_or(false, |stored_code| {
-        ct_eq(&stored_code.to_uppercase(), &data.recovery_code.to_uppercase())
+        ct_eq(
+            &stored_code.to_uppercase(),
+            &data.recovery_code.to_uppercase(),
+        )
     });
 
     if !is_valid {
@@ -403,15 +405,11 @@ pub async fn recover(
     }
 
     // Delete all 2FA methods
-    query!(
-        &db,
-        "DELETE FROM twofactor WHERE user_uuid = ?1",
-        &user.id
-    )
-    .map_err(|_| AppError::Database)?
-    .run()
-    .await
-    .map_err(|_| AppError::Database)?;
+    query!(&db, "DELETE FROM twofactor WHERE user_uuid = ?1", &user.id)
+        .map_err(|_| AppError::Database)?
+        .run()
+        .await
+        .map_err(|_| AppError::Database)?;
 
     // Clear recovery code
     query!(
@@ -448,8 +446,7 @@ async fn validate_password_or_otp(user: &User, data: &PasswordOrOtpData) -> Resu
 async fn generate_recovery_code_for_user(
     db: &worker::D1Database,
     user_id: &str,
-)
--> Result<(), AppError> {
+) -> Result<(), AppError> {
     // Check if recovery code already exists
     let user_value: Value = db
         .prepare("SELECT totp_recover FROM users WHERE id = ?1")
@@ -482,7 +479,10 @@ async fn generate_recovery_code_for_user(
 }
 
 /// Clear recovery code when no real 2FA providers remain.
-async fn clear_recovery_if_no_twofactor(db: &worker::D1Database, user_id: &str) -> Result<(), AppError> {
+async fn clear_recovery_if_no_twofactor(
+    db: &worker::D1Database,
+    user_id: &str,
+) -> Result<(), AppError> {
     let remaining: Vec<TwoFactor> = db
         .prepare("SELECT * FROM twofactor WHERE user_uuid = ?1 AND atype < 1000 AND atype != ?2")
         .bind(&[
@@ -496,11 +496,15 @@ async fn clear_recovery_if_no_twofactor(db: &worker::D1Database, user_id: &str) 
         .map_err(|_| AppError::Database)?;
 
     if remaining.is_empty() {
-        query!(db, "UPDATE users SET totp_recover = NULL WHERE id = ?1", user_id)
-            .map_err(|_| AppError::Database)?
-            .run()
-            .await
-            .map_err(|_| AppError::Database)?;
+        query!(
+            db,
+            "UPDATE users SET totp_recover = NULL WHERE id = ?1",
+            user_id
+        )
+        .map_err(|_| AppError::Database)?
+        .run()
+        .await
+        .map_err(|_| AppError::Database)?;
     }
 
     Ok(())

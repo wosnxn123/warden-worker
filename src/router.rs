@@ -5,7 +5,10 @@ use axum::{
 use std::sync::Arc;
 use worker::Env;
 
-use crate::handlers::{accounts, ciphers, config, devices, emergency_access, folders, identity, import, sync, twofactor, webauth};
+use crate::handlers::{
+    accounts, ciphers, config, devices, emergency_access, folders, identity, import, sync,
+    twofactor, webauth,
+};
 
 pub fn api_router(env: Env) -> Router {
     let app_state = Arc::new(env);
@@ -48,7 +51,10 @@ pub fn api_router(env: Env) -> Router {
         .route("/api/ciphers/create", post(ciphers::create_cipher))
         .route("/api/ciphers/import", post(import::import_data))
         .route("/api/ciphers/{id}", get(ciphers::get_cipher))
-        .route("/api/ciphers/{id}/details", get(ciphers::get_cipher_details))
+        .route(
+            "/api/ciphers/{id}/details",
+            get(ciphers::get_cipher_details),
+        )
         .route("/api/ciphers/{id}", put(ciphers::update_cipher))
         .route("/api/ciphers/{id}", post(ciphers::update_cipher))
         // Cipher soft delete (PUT sets deleted_at timestamp)
@@ -126,10 +132,7 @@ pub fn api_router(env: Env) -> Router {
             post(devices::post_clear_device_token),
         )
         // WebAuthn (stub - prevents 404 errors, passkeys not supported)
-        .route(
-            "/api/webauthn",
-            get(webauth::get_webauthn_credentials),
-        )
+        .route("/api/webauthn", get(webauth::get_webauthn_credentials))
         // Two-factor authentication
         .route("/api/two-factor", get(twofactor::get_twofactor))
         .route(
@@ -156,10 +159,7 @@ pub fn api_router(env: Env) -> Router {
             "/api/two-factor/disable",
             put(twofactor::disable_twofactor_put),
         )
-        .route(
-            "/api/two-factor/get-recover",
-            post(twofactor::get_recover),
-        )
+        .route("/api/two-factor/get-recover", post(twofactor::get_recover))
         .route("/api/two-factor/recover", post(twofactor::recover))
         .with_state(app_state)
 }

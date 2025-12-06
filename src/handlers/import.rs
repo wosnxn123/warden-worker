@@ -38,10 +38,8 @@ pub async fn import_data(
     .await?
     .results::<FolderIdRow>()?;
 
-    let existing_folders: HashSet<String> = existing_folder_rows
-        .into_iter()
-        .map(|row| row.id)
-        .collect();
+    let existing_folders: HashSet<String> =
+        existing_folder_rows.into_iter().map(|row| row.id).collect();
 
     // Process folders and build the folder_id list
     let mut folder_statements: Vec<D1PreparedStatement> = Vec::new();
@@ -112,7 +110,8 @@ pub async fn import_data(
 
     // Build the relations map: cipher_index -> folder_index
     // Each cipher can only be in one folder at a time
-    let mut relations_map: HashMap<usize, usize> = HashMap::with_capacity(data.folder_relationships.len());
+    let mut relations_map: HashMap<usize, usize> =
+        HashMap::with_capacity(data.folder_relationships.len());
     for relation in data.folder_relationships {
         relations_map.insert(relation.key, relation.value);
     }

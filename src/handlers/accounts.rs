@@ -1,8 +1,4 @@
-use axum::{
-    extract::State,
-    http::HeaderMap,
-    Json,
-};
+use axum::{extract::State, http::HeaderMap, Json};
 use chrono::Utc;
 use glob_match::glob_match;
 use serde_json::{json, Value};
@@ -21,7 +17,8 @@ use crate::{
         sync::Profile,
         user::{
             AvatarData, ChangeKdfRequest, ChangePasswordRequest, MasterPasswordUnlockData,
-            PasswordOrOtpData, PreloginResponse, ProfileData, RegisterRequest, RotateKeyRequest, User,
+            PasswordOrOtpData, PreloginResponse, ProfileData, RegisterRequest, RotateKeyRequest,
+            User,
         },
     },
 };
@@ -148,7 +145,9 @@ pub async fn prelogin(
 
     let db = db::get_db(&env)?;
 
-    let stmt = db.prepare("SELECT kdf_type, kdf_iterations, kdf_memory, kdf_parallelism FROM users WHERE email = ?1");
+    let stmt = db.prepare(
+        "SELECT kdf_type, kdf_iterations, kdf_memory, kdf_parallelism FROM users WHERE email = ?1",
+    );
     let query = stmt.bind(&[email.into()])?;
     let row: Option<Value> = query.first(None).await.map_err(|_| AppError::Database)?;
 
@@ -616,7 +615,11 @@ pub async fn post_rotatekey(
 
     // All personal ciphers must have an id for key rotation
     if personal_ciphers.len() != request_cipher_ids.len() {
-        log::error!("All ciphers must have an id for key rotation: {:?} != {:?}", personal_ciphers.len(), request_cipher_ids.len());
+        log::error!(
+            "All ciphers must have an id for key rotation: {:?} != {:?}",
+            personal_ciphers.len(),
+            request_cipher_ids.len()
+        );
         return Err(AppError::BadRequest(
             "All ciphers must have an id for key rotation".to_string(),
         ));
@@ -676,7 +679,13 @@ pub async fn post_rotatekey(
         .unwrap_or(0) as usize;
 
     if db_cipher_count != request_cipher_ids.len() || db_folder_count != request_folder_ids.len() {
-        log::error!("Cipher or folder count mismatch in rotation request: {:?} != {:?} or {:?} != {:?}", db_cipher_count, request_cipher_ids.len(), db_folder_count, request_folder_ids.len());
+        log::error!(
+            "Cipher or folder count mismatch in rotation request: {:?} != {:?} or {:?} != {:?}",
+            db_cipher_count,
+            request_cipher_ids.len(),
+            db_folder_count,
+            request_folder_ids.len()
+        );
         return Err(AppError::BadRequest(
             "All existing ciphers and folders must be included in the rotation".to_string(),
         ));
@@ -687,7 +696,11 @@ pub async fn post_rotatekey(
     let has_missing_folders = !validation_results[3].results::<Value>()?.is_empty();
 
     if has_missing_ciphers || has_missing_folders {
-        log::error!("Missing ciphers or folders in rotation request: {:?} or {:?}", has_missing_ciphers, has_missing_folders);
+        log::error!(
+            "Missing ciphers or folders in rotation request: {:?} or {:?}",
+            has_missing_ciphers,
+            has_missing_folders
+        );
         return Err(AppError::BadRequest(
             "All existing ciphers and folders must be included in the rotation".to_string(),
         ));

@@ -25,11 +25,13 @@ pub struct Claims {
 /// AuthUser extractor - provides (user_id, email) tuple
 pub struct AuthUser(pub String, pub String);
 
-impl FromRequestParts<Arc<Env>> for Claims
-{
+impl FromRequestParts<Arc<Env>> for Claims {
     type Rejection = AppError;
 
-    async fn from_request_parts(parts: &mut Parts, state: &Arc<Env>) -> Result<Self, Self::Rejection> {
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &Arc<Env>,
+    ) -> Result<Self, Self::Rejection> {
         // Extract the token from the authorization header
         let token = parts
             .headers
@@ -55,11 +57,13 @@ impl FromRequestParts<Arc<Env>> for Claims
     }
 }
 
-impl FromRequestParts<Arc<Env>> for AuthUser
-{
+impl FromRequestParts<Arc<Env>> for AuthUser {
     type Rejection = AppError;
 
-    async fn from_request_parts(parts: &mut Parts, state: &Arc<Env>) -> Result<Self, Self::Rejection> {
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &Arc<Env>,
+    ) -> Result<Self, Self::Rejection> {
         let claims = Claims::from_request_parts(parts, state).await?;
         Ok(AuthUser(claims.sub, claims.email))
     }
