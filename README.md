@@ -23,14 +23,14 @@ Warden aims to solve this problem by leveraging the Cloudflare Workers ecosystem
 
 ## Current Status
 
-**This project is not yet feature-complete**, ~~and it may never be~~. It currently supports the core functionality of a personal vault, including TOTP (storage and generation, not login). However, it does **not** support the following features:
+**This project is not yet feature-complete**, ~~and it may never be~~. It currently supports the core functionality of a personal vault, including TOTP. However, it does **not** support the following features:
 
 *   Sharing
-*   2FA login
+*   2FA login (except TOTP)
 *   Bitwarden Send
 *   Device and session management
 *   Emergency access
-*   Admin operation
+*   Admin operations
 *   Organizations
 *   Other Bitwarden advanced features
 
@@ -309,8 +309,14 @@ You can configure the following environment variables in `wrangler.toml` under t
     Controls whether the "Create Account" / registration button is displayed in the Bitwarden client UI.
     
     *   Set to `false` to show the registration button
-    *   Defaults to `true` (hide registration button)
     *   **Note:** This setting only affects the client UI display. It does NOT affect the actual registration functionality on the server side.
+
+*   **`AUTHENTICATOR_DISABLE_TIME_DRIFT`** (Optional, Default: `false`) 
+
+    Controls whether the default ±1 time step drift for TOTP validation is disabled.
+
+    *   Set to `true` to DISABLE the time step drift
+    *   **Note:** This setting only affects the TOTP validation. It does NOT affect the actual TOTP generation.
 
 ### Scheduled Tasks (Cron)
 

@@ -21,6 +21,7 @@ pub struct User {
     pub kdf_memory: Option<i32>,      // Argon2 memory parameter (15-1024 MB)
     pub kdf_parallelism: Option<i32>, // Argon2 parallelism parameter (1-16)
     pub security_stamp: String,
+    pub totp_recover: Option<String>, // Recovery code for 2FA
     pub created_at: String,
     pub updated_at: String,
 }

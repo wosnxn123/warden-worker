@@ -225,14 +225,15 @@ pub async fn register(
         kdf_memory,
         kdf_parallelism,
         security_stamp: Uuid::new_v4().to_string(),
+        totp_recover: None,
         created_at: now.clone(),
         updated_at: now,
     };
 
     query!(
         &db,
-        "INSERT INTO users (id, name, email, master_password_hash, master_password_hint, password_salt, key, private_key, public_key, kdf_type, kdf_iterations, kdf_memory, kdf_parallelism, security_stamp, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+        "INSERT INTO users (id, name, email, master_password_hash, master_password_hint, password_salt, key, private_key, public_key, kdf_type, kdf_iterations, kdf_memory, kdf_parallelism, security_stamp, totp_recover, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
          user.id,
          user.name,
          user.email,
@@ -247,6 +248,7 @@ pub async fn register(
          user.kdf_memory,
          user.kdf_parallelism,
          user.security_stamp,
+         user.totp_recover,
          user.created_at,
          user.updated_at
     ).map_err(|_|{

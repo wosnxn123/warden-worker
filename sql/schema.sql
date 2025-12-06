@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS users (
     kdf_memory INTEGER, -- Argon2 memory parameter in MB (15-1024), NULL for PBKDF2
     kdf_parallelism INTEGER, -- Argon2 parallelism parameter (1-16), NULL for PBKDF2
     security_stamp TEXT,
+    totp_recover TEXT, -- Recovery code for 2FA
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -33,6 +34,19 @@ CREATE TABLE IF NOT EXISTS ciphers (
     updated_at TEXT NOT NULL,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
     FOREIGN KEY (folder_id) REFERENCES folders(id) ON DELETE SET NULL
+);
+
+-- TwoFactor table for two-factor authentication
+-- Types: 0=Authenticator(TOTP), 1=Email, 5=Remember, 8=RecoveryCode
+CREATE TABLE IF NOT EXISTS twofactor (
+    uuid TEXT PRIMARY KEY NOT NULL,
+    user_uuid TEXT NOT NULL,
+    atype INTEGER NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    data TEXT NOT NULL, -- JSON data specific to the 2FA type (e.g., TOTP secret)
+    last_used INTEGER NOT NULL DEFAULT 0, -- Unix timestamp or TOTP time step
+    FOREIGN KEY (user_uuid) REFERENCES users(id) ON DELETE CASCADE,
+    UNIQUE(user_uuid, atype)
 );
 
 -- Folders table for organizing ciphers

@@ -1,18 +1,44 @@
 use axum::{extract::State, Form, Json};
 use chrono::{Duration, Utc};
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 use std::sync::Arc;
 use worker::{query, Env};
 
 use crate::{
     auth::Claims,
-    crypto::{generate_salt, hash_password_for_storage},
+    crypto::{ct_eq, generate_salt, hash_password_for_storage, validate_totp},
+    handlers::allow_totp_drift,
     db,
     error::AppError,
+    models::twofactor::{RememberTokenData, TwoFactor, TwoFactorType},
     models::user::User,
 };
+
+/// Deserialize an Option<i32> that may have trailing/leading whitespace.
+/// This handles Android clients that send "0 " instead of "0".
+fn deserialize_trimmed_i32<'de, D>(deserializer: D) -> Result<Option<i32>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde::de::Error;
+    let opt: Option<String> = Option::deserialize(deserializer)?;
+    match opt {
+        Some(s) => {
+            let trimmed = s.trim();
+            if trimmed.is_empty() {
+                Ok(None)
+            } else {
+                trimmed
+                    .parse::<i32>()
+                    .map(Some)
+                    .map_err(|_| D::Error::custom(format!("invalid integer: {}", s)))
+            }
+        }
+        None => Ok(None),
+    }
+}
 
 #[derive(Debug, Deserialize)]
 pub struct TokenRequest {
@@ -20,6 +46,15 @@ pub struct TokenRequest {
     username: Option<String>,
     password: Option<String>, // This is the masterPasswordHash
     refresh_token: Option<String>,
+    // 2FA fields
+    #[serde(rename = "twoFactorToken")]
+    two_factor_token: Option<String>,
+    #[serde(rename = "twoFactorProvider", default, deserialize_with = "deserialize_trimmed_i32")]
+    two_factor_provider: Option<i32>,
+    #[serde(rename = "twoFactorRemember", default, deserialize_with = "deserialize_trimmed_i32")]
+    two_factor_remember: Option<i32>,
+    #[serde(rename = "deviceIdentifier")]
+    device_identifier: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -51,6 +86,8 @@ pub struct TokenResponse {
     force_password_reset: bool,
     #[serde(rename = "UserDecryptionOptions")]
     user_decryption_options: UserDecryptionOptions,
+    #[serde(rename = "TwoFactorToken", skip_serializing_if = "Option::is_none")]
+    two_factor_token: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -63,6 +100,7 @@ pub struct UserDecryptionOptions {
 fn generate_tokens_and_response(
     user: User,
     env: &Arc<Env>,
+    two_factor_token: Option<String>,
 ) -> Result<Json<TokenResponse>, AppError> {
     let now = Utc::now();
     let expires_in = Duration::hours(1);
@@ -122,6 +160,7 @@ fn generate_tokens_and_response(
             has_master_password: true,
             object: "userDecryptionOptions".to_string(),
         },
+        two_factor_token,
     }))
 }
 
@@ -168,6 +207,188 @@ pub async fn token(
                 return Err(AppError::Unauthorized("Invalid credentials".to_string()));
             }
 
+            // Check for 2FA
+            let twofactors: Vec<TwoFactor> = db
+                .prepare("SELECT * FROM twofactor WHERE user_uuid = ?1 AND atype < 1000")
+                .bind(&[user.id.clone().into()])?
+                .all()
+                .await
+                .map_err(|_| AppError::Database)?
+                .results()
+                .unwrap_or_default();
+
+            let mut two_factor_remember_token: Option<String> = None;
+
+            // Filter out Remember type - it's not a real 2FA provider, just a convenience feature
+            let real_twofactors: Vec<&TwoFactor> = twofactors
+                .iter()
+                .filter(|tf| tf.atype != TwoFactorType::Remember as i32)
+                .collect();
+
+            if !real_twofactors.is_empty() {
+                // 2FA is enabled, need to verify
+                // Only show real 2FA providers to client (not Remember)
+                let twofactor_ids: Vec<i32> = real_twofactors.iter().map(|tf| tf.atype).collect();
+                let selected_id = payload.two_factor_provider.unwrap_or(twofactor_ids[0]);
+
+                let twofactor_code = match &payload.two_factor_token {
+                    Some(code) => code,
+                    None => {
+                        // Return 2FA required error
+                        return Err(AppError::TwoFactorRequired(json_err_twofactor(&twofactor_ids)));
+                    }
+                };
+
+                // Find the selected twofactor from real_twofactors
+                let selected_twofactor = real_twofactors
+                    .iter()
+                    .find(|tf| tf.atype == selected_id && tf.enabled)
+                    .copied();
+
+                match TwoFactorType::from_i32(selected_id) {
+                    Some(TwoFactorType::Authenticator) => {
+                        let tf = selected_twofactor.ok_or_else(|| {
+                            AppError::BadRequest("TOTP not configured".to_string())
+                        })?;
+                        
+                        // Validate TOTP code
+                        let allow_drift = allow_totp_drift(&env);
+                        let new_last_used =
+                            validate_totp(twofactor_code, &tf.data, tf.last_used, allow_drift).await?;
+                        
+                        // Update last_used
+                        query!(
+                            &db,
+                            "UPDATE twofactor SET last_used = ?1 WHERE uuid = ?2",
+                            new_last_used,
+                            &tf.uuid
+                        )
+                        .map_err(|_| AppError::Database)?
+                        .run()
+                        .await
+                        .map_err(|_| AppError::Database)?;
+                    }
+                    Some(TwoFactorType::Remember) => {
+                        // Remember is handled separately - client sends remember token from previous login
+                        // Check remember token against stored value for this device
+                        if let Some(ref device_id) = payload.device_identifier {
+                            // Find remember token in twofactors (not real_twofactors)
+                            let remember_tf = twofactors
+                                .iter()
+                                .find(|tf| tf.atype == TwoFactorType::Remember as i32);
+                            
+                            if let Some(tf) = remember_tf {
+                                // Parse stored remember tokens as JSON
+                                let mut token_data = RememberTokenData::from_json(&tf.data);
+                                
+                                // Remove expired tokens first
+                                token_data.remove_expired();
+                                
+                                // Validate the provided token
+                                if !token_data.validate(device_id, twofactor_code) {
+                                    return Err(AppError::TwoFactorRequired(json_err_twofactor(&twofactor_ids)));
+                                }
+                                
+                                // Update database with cleaned tokens (remove expired)
+                                let updated_data = token_data.to_json();
+                                query!(
+                                    &db,
+                                    "UPDATE twofactor SET data = ?1 WHERE uuid = ?2",
+                                    &updated_data,
+                                    &tf.uuid
+                                )
+                                .map_err(|_| AppError::Database)?
+                                .run()
+                                .await
+                                .map_err(|_| AppError::Database)?;
+                                
+                                // Remember token valid, proceed with login
+                            } else {
+                                return Err(AppError::TwoFactorRequired(json_err_twofactor(&twofactor_ids)));
+                            }
+                        } else {
+                            return Err(AppError::TwoFactorRequired(json_err_twofactor(&twofactor_ids)));
+                        }
+                    }
+                    Some(TwoFactorType::RecoveryCode) => {
+                        // Check recovery code
+                        if let Some(ref stored_code) = user.totp_recover {
+                            if !ct_eq(&stored_code.to_uppercase(), &twofactor_code.to_uppercase()) {
+                                return Err(AppError::BadRequest("Recovery code is incorrect".to_string()));
+                            }
+                            
+                            // Delete all 2FA and clear recovery code
+                            query!(
+                                &db,
+                                "DELETE FROM twofactor WHERE user_uuid = ?1",
+                                &user.id
+                            )
+                            .map_err(|_| AppError::Database)?
+                            .run()
+                            .await
+                            .map_err(|_| AppError::Database)?;
+                            
+                            query!(
+                                &db,
+                                "UPDATE users SET totp_recover = NULL WHERE id = ?1",
+                                &user.id
+                            )
+                            .map_err(|_| AppError::Database)?
+                            .run()
+                            .await
+                            .map_err(|_| AppError::Database)?;
+                        } else {
+                            return Err(AppError::BadRequest("Recovery code is incorrect".to_string()));
+                        }
+                    }
+                    _ => {
+                        return Err(AppError::BadRequest("Invalid two factor provider".to_string()));
+                    }
+                }
+
+                // Generate remember token if requested
+                if payload.two_factor_remember == Some(1) {
+                    if let Some(ref device_id) = payload.device_identifier {
+                        let remember_token = uuid::Uuid::new_v4().to_string();
+                        
+                        // Load existing remember tokens or create new
+                        let remember_tf = twofactors
+                            .iter()
+                            .find(|tf| tf.atype == TwoFactorType::Remember as i32);
+                        
+                        let mut token_data = remember_tf
+                            .map(|tf| RememberTokenData::from_json(&tf.data))
+                            .unwrap_or_default();
+                        
+                        // Remove expired tokens first
+                        token_data.remove_expired();
+                        
+                        // Add/update token for this device
+                        token_data.upsert(device_id.clone(), remember_token.clone());
+                        
+                        let json_data = token_data.to_json();
+                        
+                        // Store or update remember token
+                        query!(
+                            &db,
+                            "INSERT INTO twofactor (uuid, user_uuid, atype, enabled, data, last_used) 
+                             VALUES (?1, ?2, ?3, 1, ?4, 0)
+                             ON CONFLICT(user_uuid, atype) DO UPDATE SET data = ?4",
+                            uuid::Uuid::new_v4().to_string(),
+                            &user.id,
+                            TwoFactorType::Remember as i32,
+                            &json_data
+                        )
+                        .map_err(|_| AppError::Database)?
+                        .run()
+                        .await
+                        .map_err(|_| AppError::Database)?;
+                        
+                        two_factor_remember_token = Some(remember_token);
+                    }
+                }
+            }
+
             // Migrate legacy user to PBKDF2 if password matches and no salt exists
             let user = if verification.needs_migration() {
                 // Generate new salt and hash the password
@@ -200,7 +421,7 @@ pub async fn token(
                 user
             };
 
-            generate_tokens_and_response(user, &env)
+            generate_tokens_and_response(user, &env, two_factor_remember_token)
         }
         "refresh_token" => {
             let refresh_token = payload
@@ -225,8 +446,31 @@ pub async fn token(
                 .ok_or_else(|| AppError::Unauthorized("Invalid user".to_string()))?;
             let user: User = serde_json::from_value(user).map_err(|_| AppError::Internal)?;
 
-            generate_tokens_and_response(user, &env)
+            generate_tokens_and_response(user, &env, None)
         }
         _ => Err(AppError::BadRequest("Unsupported grant_type".to_string())),
     }
+}
+
+/// Generates the JSON error response for 2FA required
+fn json_err_twofactor(providers: &[i32]) -> Value {
+    let mut result = serde_json::json!({
+        "error": "invalid_grant",
+        "error_description": "Two factor required.",
+        "TwoFactorProviders": providers.iter().map(|p| p.to_string()).collect::<Vec<String>>(),
+        "TwoFactorProviders2": {},
+        "MasterPasswordPolicy": {
+            "Object": "masterPasswordPolicy"
+        }
+    });
+
+    // Add provider-specific info
+    for provider in providers {
+        result["TwoFactorProviders2"][provider.to_string()] = Value::Null;
+        
+        // TOTP doesn't need any additional info
+        // Other providers like Email, WebAuthn etc. would add their info here
+    }
+
+    result
 }
