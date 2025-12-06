@@ -20,8 +20,8 @@ use crate::{
         cipher::CipherData,
         sync::Profile,
         user::{
-            ChangeKdfRequest, ChangePasswordRequest, PasswordOrOtpData, PreloginResponse,
-            RegisterRequest, RotateKeyRequest, User, ProfileData, AvatarData,
+            AvatarData, ChangeKdfRequest, ChangePasswordRequest, MasterPasswordUnlockData,
+            PasswordOrOtpData, PreloginResponse, ProfileData, RegisterRequest, RotateKeyRequest, User,
         },
     },
 };
@@ -84,6 +84,37 @@ fn ensure_supported_kdf(
                 "Unsupported KDF type. Only PBKDF2 (0) and Argon2id (1) are supported".to_string(),
             ));
         }
+    }
+
+    Ok(())
+}
+
+fn validate_rotation_metadata(
+    user: &User,
+    unlock_data: &MasterPasswordUnlockData,
+    account_public_key: &str,
+) -> Result<(), AppError> {
+    let kdf_matches = user.kdf_type == unlock_data.kdf_type
+        && user.kdf_iterations == unlock_data.kdf_iterations
+        && user.kdf_memory == unlock_data.kdf_memory
+        && user.kdf_parallelism == unlock_data.kdf_parallelism;
+
+    if user.email != unlock_data.email || !kdf_matches {
+        log::error!(
+            "KDF/email mismatch in rotation request: email_equal={}, kdf_equal={}",
+            user.email == unlock_data.email,
+            kdf_matches
+        );
+        return Err(AppError::BadRequest(
+            "Changing the kdf variant or email is not supported during key rotation".to_string(),
+        ));
+    }
+
+    if user.public_key != account_public_key {
+        log::error!("Public key mismatch in rotation request: stored != provided");
+        return Err(AppError::BadRequest(
+            "Changing the asymmetric keypair is not supported during key rotation".to_string(),
+        ));
     }
 
     Ok(())
@@ -555,14 +586,9 @@ pub async fn post_rotatekey(
         return Err(AppError::Unauthorized("Invalid password".to_string()));
     }
 
-    // Validate that email and kdf settings match
     let unlock_data = &payload.account_unlock_data.master_password_unlock_data;
-    if user.email != unlock_data.email {
-        log::error!("Email mismatch in rotation request: {:?} != {:?}", user.email, unlock_data.email);
-        return Err(AppError::BadRequest(
-            "Email mismatch in rotation request".to_string(),
-        ));
-    }
+
+    validate_rotation_metadata(&user, unlock_data, &payload.account_keys.account_public_key)?;
 
     // Validate KDF parameters
     ensure_supported_kdf(
