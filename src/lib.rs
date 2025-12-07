@@ -1,4 +1,4 @@
-use axum::Extension;
+use axum::{extract::DefaultBodyLimit, Extension};
 use tower_http::cors::{Any, CorsLayer};
 use tower_service::Service;
 use worker::*;
@@ -39,9 +39,13 @@ pub async fn main(
         .allow_headers(Any)
         .allow_origin(Any);
 
+    let body_limit = attachment_body_limit_bytes(&env);
+
     let mut app = router::api_router(env)
         .layer(Extension(BaseUrl(base_url)))
-        .layer(cors);
+        .layer(cors)
+        // axum 默认 body 限制为 2MiB，附件上传需要更大的上限
+        .layer(DefaultBodyLimit::max(body_limit));
 
     Ok(app.call(req).await?)
 }
@@ -67,4 +71,30 @@ pub async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) 
             log::error!("Scheduled purge failed: {:?}", e);
         }
     }
+}
+
+/// Resolve a permissive body size limit, prioritizing ATTACHMENT_MAX_BYTES and falling back to 64MiB.
+fn attachment_body_limit_bytes(env: &Env) -> usize {
+    const DEFAULT_LIMIT: usize = 64 * 1024 * 1024;
+
+    let max_bytes = env.var("ATTACHMENT_MAX_BYTES").ok().and_then(|v| {
+        let raw = v.to_string();
+        match raw.parse::<u64>() {
+            Ok(val) => Some(val),
+            Err(err) => {
+                log::error!("Invalid ATTACHMENT_MAX_BYTES '{}': {}", raw, err);
+                None
+            }
+        }
+    });
+
+    let limit_u64 = max_bytes.unwrap_or(DEFAULT_LIMIT as u64);
+
+    limit_u64.try_into().unwrap_or_else(|_| {
+        log::error!(
+            "Attachment body limit {} did not fit into usize, falling back to default",
+            limit_u64
+        );
+        DEFAULT_LIMIT
+    })
 }

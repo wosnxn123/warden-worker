@@ -1,9 +1,8 @@
 use std::{collections::HashMap, sync::Arc};
 
 use axum::{
-    body::Body,
     extract::{Multipart, Path, Query, State},
-    http::{header, HeaderValue, StatusCode},
+    http::{header, StatusCode},
     response::Response,
     Json,
 };
@@ -13,7 +12,10 @@ use log;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
-use worker::{query, wasm_bindgen::JsValue, Bucket, D1Database, Env, HttpMetadata};
+use worker::{
+    query, wasm_bindgen::JsValue, Bucket, D1Database, Env, Headers as WorkerHeaders, HttpMetadata,
+    Response as WorkerResponse,
+};
 
 use crate::{
     auth::Claims,
@@ -415,22 +417,32 @@ pub async fn download_attachment(
         .map_err(AppError::Worker)?
         .ok_or_else(|| AppError::NotFound("Attachment not found".to_string()))?;
 
-    let body = object
+    let content_length = object.size();
+    let http_metadata = object.http_metadata();
+
+    let response_body = object
         .body()
         .ok_or_else(|| AppError::NotFound("Attachment data not found".to_string()))?
-        .bytes()
-        .await
+        .response_body()
         .map_err(AppError::Worker)?;
 
-    let mut builder = Response::builder().status(StatusCode::OK);
-    builder = builder.header(header::CONTENT_TYPE, "application/octet-stream");
-    if let Ok(value) = HeaderValue::from_str(&body.len().to_string()) {
-        builder = builder.header(header::CONTENT_LENGTH, value);
-    }
+    let headers = WorkerHeaders::new();
+    let content_type = http_metadata
+        .content_type
+        .unwrap_or_else(|| "application/octet-stream".to_string());
+    headers
+        .set(header::CONTENT_TYPE.as_str(), &content_type)
+        .map_err(AppError::Worker)?;
+    headers
+        .set(header::CONTENT_LENGTH.as_str(), &content_length.to_string())
+        .map_err(AppError::Worker)?;
 
-    builder
-        .body(Body::from(body))
-        .map_err(|_| AppError::Internal)
+    let response = WorkerResponse::from_body(response_body)
+        .map_err(AppError::Worker)?
+        .with_status(StatusCode::OK.as_u16())
+        .with_headers(headers);
+
+    Ok(response.into())
 }
 
 /// Attach attachment information to Cipher (used by other handlers)
