@@ -30,7 +30,7 @@ impl From<Folder> for FolderResponse {
             id: folder.id,
             name: folder.name,
             revision_date: folder.updated_at,
-            object: "folder".to_string(),
+            object: default_object(),
         }
     }
 }

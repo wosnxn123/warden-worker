@@ -197,13 +197,4 @@ impl RememberTokenData {
             created_at: Utc::now().timestamp(),
         });
     }
-
-    /// Check if there are any valid (non-expired) tokens
-    pub fn has_valid_tokens(&self) -> bool {
-        let now = Utc::now().timestamp();
-        let expiration_seconds = Duration::days(REMEMBER_TOKEN_EXPIRATION_DAYS).num_seconds();
-        self.tokens
-            .iter()
-            .any(|t| now - t.created_at < expiration_seconds)
-    }
 }

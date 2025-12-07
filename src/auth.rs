@@ -23,7 +23,11 @@ pub struct Claims {
 }
 
 /// AuthUser extractor - provides (user_id, email) tuple
-pub struct AuthUser(pub String, pub String);
+pub struct AuthUser(
+    pub String, // user_id
+    #[allow(dead_code)] // email is not used in this simplified version
+    pub String, // email
+);
 
 impl FromRequestParts<Arc<Env>> for Claims {
     type Rejection = AppError;

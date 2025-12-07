@@ -144,6 +144,7 @@ pub struct KeyData {
 pub struct PasswordOrOtpData {
     #[serde(alias = "MasterPasswordHash")]
     pub master_password_hash: Option<String>,
+    #[allow(dead_code)] // OTP verification is not implemented in this simplified version
     pub otp: Option<String>,
 }
 
