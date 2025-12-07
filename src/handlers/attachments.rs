@@ -54,6 +54,12 @@ pub struct AttachmentUploadResponse {
     pub cipher_response: Cipher,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AttachmentDeleteResponse {
+    pub cipher: Cipher,
+}
+
 #[derive(Deserialize)]
 #[serde(untagged)]
 pub enum NumberOrString {
@@ -346,8 +352,9 @@ pub async fn get_attachment(
 pub async fn delete_attachment(
     claims: Claims,
     State(env): State<Arc<Env>>,
+    Extension(BaseUrl(base_url)): Extension<BaseUrl>,
     Path((cipher_id, attachment_id)): Path<(String, String)>,
-) -> Result<Json<()>, AppError> {
+) -> Result<Json<AttachmentDeleteResponse>, AppError> {
     let bucket = require_bucket(&env)?;
     let db = db::get_db(&env)?;
 
@@ -376,7 +383,14 @@ pub async fn delete_attachment(
     touch_cipher_updated_at(&db, &cipher_id).await?;
     db::touch_user_updated_at(&db, &claims.sub).await?;
 
-    Ok(Json(()))
+    // Reload cipher to return fresh updated_at and attachments state
+    let mut cipher_response: Cipher =
+        ensure_cipher_for_user(&db, &cipher_id, &claims.sub).await?.into();
+    hydrate_cipher_attachments(&db, &env, &base_url, &mut cipher_response, &claims.sub).await?;
+
+    Ok(Json(AttachmentDeleteResponse {
+        cipher: cipher_response,
+    }))
 }
 
 /// POST /api/ciphers/{cipher_id}/attachment/{attachment_id}/delete
@@ -385,9 +399,16 @@ pub async fn delete_attachment(
 pub async fn delete_attachment_post(
     claims: Claims,
     State(env): State<Arc<Env>>,
+    Extension(BaseUrl(base_url)): Extension<BaseUrl>,
     Path((cipher_id, attachment_id)): Path<(String, String)>,
-) -> Result<Json<()>, AppError> {
-    delete_attachment(claims, State(env), Path((cipher_id, attachment_id))).await
+) -> Result<Json<AttachmentDeleteResponse>, AppError> {
+    delete_attachment(
+        claims,
+        State(env),
+        Extension(BaseUrl(base_url)),
+        Path((cipher_id, attachment_id)),
+    )
+    .await
 }
 
 /// GET /api/ciphers/{cipher_id}/attachment/{attachment_id}/download
