@@ -12,6 +12,7 @@ use crate::{
     crypto::{generate_salt, hash_password_for_storage},
     db,
     error::AppError,
+    handlers::attachments,
     models::{
         cipher::CipherData,
         sync::Profile,
@@ -475,6 +476,12 @@ pub async fn delete_account(
 
     if !verification.is_valid() {
         return Err(AppError::Unauthorized("Invalid password".to_string()));
+    }
+
+    if attachments::attachments_enabled(env.as_ref()) {
+        let bucket = attachments::require_bucket(env.as_ref())?;
+        let keys = attachments::list_attachment_keys_for_user(&db, user_id).await?;
+        attachments::delete_r2_objects(&bucket, &keys).await?;
     }
 
     // Delete all user's ciphers

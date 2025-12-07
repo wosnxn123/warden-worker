@@ -416,6 +416,12 @@ pub async fn hard_delete_cipher(
 ) -> Result<Json<()>, AppError> {
     let db = db::get_db(&env)?;
 
+    if attachments::attachments_enabled(env.as_ref()) {
+        let bucket = attachments::require_bucket(env.as_ref())?;
+        let keys = attachments::list_attachment_keys_for_cipher_ids(&db, &[id.clone()], Some(&claims.sub)).await?;
+        attachments::delete_r2_objects(&bucket, &keys).await?;
+    }
+
     query!(
         &db,
         "DELETE FROM ciphers WHERE id = ?1 AND user_id = ?2",
@@ -440,9 +446,18 @@ pub async fn hard_delete_ciphers_bulk(
 ) -> Result<Json<()>, AppError> {
     let db = db::get_db(&env)?;
     let batch_size = get_batch_size(&env);
-    let mut statements: Vec<D1PreparedStatement> = Vec::with_capacity(payload.ids.len());
+    let ids = payload.ids;
 
-    for id in payload.ids {
+    if attachments::attachments_enabled(env.as_ref()) {
+        let bucket = attachments::require_bucket(env.as_ref())?;
+        let keys =
+            attachments::list_attachment_keys_for_cipher_ids(&db, &ids, Some(&claims.sub)).await?;
+        attachments::delete_r2_objects(&bucket, &keys).await?;
+    }
+
+    let mut statements: Vec<D1PreparedStatement> = Vec::with_capacity(ids.len());
+
+    for id in ids {
         let stmt = query!(
             &db,
             "DELETE FROM ciphers WHERE id = ?1 AND user_id = ?2",
@@ -745,6 +760,12 @@ pub async fn purge_vault(
 
     if !verification.is_valid() {
         return Err(AppError::Unauthorized("Invalid password".to_string()));
+    }
+
+    if attachments::attachments_enabled(env.as_ref()) {
+        let bucket = attachments::require_bucket(env.as_ref())?;
+        let keys = attachments::list_attachment_keys_for_user(&db, user_id).await?;
+        attachments::delete_r2_objects(&bucket, &keys).await?;
     }
 
     // Delete all user's ciphers (both active and soft-deleted)

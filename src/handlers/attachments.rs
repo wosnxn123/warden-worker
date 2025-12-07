@@ -81,6 +81,12 @@ pub struct AttachmentDownloadQuery {
     pub token: Option<String>,
 }
 
+#[derive(Deserialize)]
+struct AttachmentKeyRow {
+    cipher_id: String,
+    id: String,
+}
+
 impl NumberOrString {
     pub fn into_i64(self) -> Result<i64, AppError> {
         match self {
@@ -368,12 +374,7 @@ pub async fn delete_attachment(
     }
 
     // Delete R2 object; ignore missing objects
-    if let Err(err) = bucket.delete(attachment.r2_key()).await {
-        let msg = err.to_string();
-        if !(msg.contains("NoSuchKey") || msg.contains("404") || msg.contains("NotFound")) {
-            return Err(AppError::Worker(err));
-        }
-    }
+    delete_r2_objects(&bucket, &[attachment.r2_key()]).await?;
 
     query!(&db, "DELETE FROM attachments WHERE id = ?1", attachment.id)
         .map_err(|_| AppError::Database)?
@@ -521,13 +522,109 @@ pub async fn hydrate_ciphers_attachments(
     Ok(())
 }
 
-fn attachments_enabled(env: &Env) -> bool {
+pub(crate) fn attachments_enabled(env: &Env) -> bool {
     env.bucket(ATTACHMENTS_BUCKET).is_ok()
 }
 
-fn require_bucket(env: &Env) -> Result<Bucket, AppError> {
+pub(crate) fn require_bucket(env: &Env) -> Result<Bucket, AppError> {
     env.bucket(ATTACHMENTS_BUCKET)
         .map_err(|_| AppError::BadRequest("Attachments are not enabled".to_string()))
+}
+
+fn is_not_found_error(err: &worker::Error) -> bool {
+    let msg = err.to_string();
+    msg.contains("NoSuchKey") || msg.contains("404") || msg.contains("NotFound")
+}
+
+pub(crate) async fn delete_r2_objects(
+    bucket: &Bucket,
+    keys: &[String],
+) -> Result<(), AppError> {
+    for key in keys {
+        if let Err(err) = bucket.delete(key).await {
+            if !is_not_found_error(&err) {
+                return Err(AppError::Worker(err));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn map_rows_to_keys(rows: Vec<AttachmentKeyRow>) -> Vec<String> {
+    rows.into_iter()
+        .map(|row| format!("{}/{}", row.cipher_id, row.id))
+        .collect()
+}
+
+pub(crate) async fn list_attachment_keys_for_cipher_ids(
+    db: &D1Database,
+    cipher_ids: &[String],
+    user_id: Option<&str>,
+) -> Result<Vec<String>, AppError> {
+    if cipher_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let ids_json = serde_json::to_string(cipher_ids).map_err(|_| AppError::Internal)?;
+
+    let mut sql = "SELECT a.cipher_id, a.id FROM attachments a JOIN ciphers c ON a.cipher_id = c.id WHERE c.id IN (SELECT value FROM json_each(?1))".to_string();
+    let mut params: Vec<worker::wasm_bindgen::JsValue> = vec![ids_json.into()];
+
+    if let Some(uid) = user_id {
+        sql.push_str(" AND c.user_id = ?2");
+        params.push(uid.into());
+    }
+
+    let rows: Vec<AttachmentKeyRow> = db
+        .prepare(&sql)
+        .bind(&params)?
+        .all()
+        .await
+        .map_err(|_| AppError::Database)?
+        .results()
+        .map_err(|_| AppError::Database)?;
+
+    Ok(map_rows_to_keys(rows))
+}
+
+pub(crate) async fn list_attachment_keys_for_user(
+    db: &D1Database,
+    user_id: &str,
+) -> Result<Vec<String>, AppError> {
+    let rows: Vec<AttachmentKeyRow> = db
+        .prepare(
+            "SELECT a.cipher_id, a.id FROM attachments a \
+             JOIN ciphers c ON a.cipher_id = c.id \
+             WHERE c.user_id = ?1",
+        )
+        .bind(&[user_id.into()])?
+        .all()
+        .await
+        .map_err(|_| AppError::Database)?
+        .results()
+        .map_err(|_| AppError::Database)?;
+
+    Ok(map_rows_to_keys(rows))
+}
+
+pub(crate) async fn list_attachment_keys_for_soft_deleted_before(
+    db: &D1Database,
+    cutoff_exclusive: &str,
+) -> Result<Vec<String>, AppError> {
+    let rows: Vec<AttachmentKeyRow> = db
+        .prepare(
+            "SELECT a.cipher_id, a.id FROM attachments a \
+             JOIN ciphers c ON a.cipher_id = c.id \
+             WHERE c.deleted_at IS NOT NULL AND c.deleted_at < ?1",
+        )
+        .bind(&[cutoff_exclusive.into()])?
+        .all()
+        .await
+        .map_err(|_| AppError::Database)?
+        .results()
+        .map_err(|_| AppError::Database)?;
+
+    Ok(map_rows_to_keys(rows))
 }
 
 fn upload_url(cipher_id: &str, attachment_id: &str) -> String {

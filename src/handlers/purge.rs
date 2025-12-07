@@ -5,6 +5,7 @@
 //! retention period.
 
 use chrono::{Duration, Utc};
+use crate::handlers::attachments;
 use std::collections::HashSet;
 use worker::{query, D1Database, Env};
 
@@ -78,6 +79,18 @@ pub async fn purge_deleted_ciphers(env: &Env) -> Result<u32, worker::Error> {
     let count = count_result.map(|r| r.count).unwrap_or(0);
 
     if count > 0 {
+        if attachments::attachments_enabled(env) {
+            let bucket = attachments::require_bucket(env)
+                .map_err(|e| worker::Error::RustError(e.to_string()))?;
+            let keys = attachments::list_attachment_keys_for_soft_deleted_before(&db, &cutoff_str)
+                .await
+                .map_err(|e| worker::Error::RustError(e.to_string()))?;
+
+            attachments::delete_r2_objects(&bucket, &keys)
+                .await
+                .map_err(|e| worker::Error::RustError(e.to_string()))?;
+        }
+
         // Delete the records
         query!(
             &db,
