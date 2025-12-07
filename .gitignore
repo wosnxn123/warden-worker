@@ -4,3 +4,7 @@ node_modules
 .env
 # Frontend files (downloaded during deployment/development)
 public/
+
+# reference repos
+vaultwarden/
+bw_web_builds/
