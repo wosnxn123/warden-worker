@@ -1,4 +1,5 @@
 pub mod accounts;
+pub mod attachments;
 pub mod ciphers;
 pub mod config;
 pub mod devices;

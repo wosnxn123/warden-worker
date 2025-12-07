@@ -11,6 +11,7 @@ use worker::{query, D1PreparedStatement, Env};
 use crate::auth::Claims;
 use crate::db;
 use crate::error::AppError;
+use crate::handlers::attachments;
 use crate::models::cipher::{
     Cipher, CipherDBModel, CipherData, CipherListResponse, CipherRequestData, CreateCipherRequest,
     MoveCipherData, PartialCipherData,
@@ -51,7 +52,7 @@ pub async fn create_cipher(
 
     let data_value = serde_json::to_value(&cipher_data).map_err(|_| AppError::Internal)?;
 
-    let cipher = Cipher {
+    let mut cipher = Cipher {
         id: Uuid::new_v4().to_string(),
         user_id: Some(claims.sub.clone()),
         organization_id: cipher_data_req.organization_id.clone(),
@@ -71,6 +72,7 @@ pub async fn create_cipher(
         } else {
             Some(payload.collection_ids)
         },
+        attachments: None,
     };
 
     let data = serde_json::to_string(&cipher.data).map_err(|_| AppError::Internal)?;
@@ -93,6 +95,7 @@ pub async fn create_cipher(
     .run()
     .await?;
 
+    attachments::hydrate_cipher_attachments(&db, env.as_ref(), &mut cipher, &claims.sub).await?;
     db::touch_user_updated_at(&db, &claims.sub).await?;
 
     Ok(Json(cipher))
@@ -167,7 +170,7 @@ pub async fn update_cipher(
 
     let data_value = serde_json::to_value(&cipher_data).map_err(|_| AppError::Internal)?;
 
-    let cipher = Cipher {
+    let mut cipher = Cipher {
         id: id.clone(),
         user_id: Some(claims.sub.clone()),
         organization_id: cipher_data_req.organization_id.clone(),
@@ -183,6 +186,7 @@ pub async fn update_cipher(
         edit: true,
         view_password: true,
         collection_ids: None,
+        attachments: None,
     };
 
     let data = serde_json::to_string(&cipher.data).map_err(|_| AppError::Internal)?;
@@ -202,6 +206,7 @@ pub async fn update_cipher(
     .run()
     .await?;
 
+    attachments::hydrate_cipher_attachments(&db, env.as_ref(), &mut cipher, &claims.sub).await?;
     db::touch_user_updated_at(&db, &claims.sub).await?;
 
     Ok(Json(cipher))
@@ -226,7 +231,9 @@ pub async fn list_ciphers(
         .await?
         .results()?;
 
-    let ciphers: Vec<Cipher> = ciphers_db.into_iter().map(|c| c.into()).collect();
+    let mut ciphers: Vec<Cipher> = ciphers_db.into_iter().map(|c| c.into()).collect();
+
+    attachments::hydrate_ciphers_attachments(&db, env.as_ref(), &mut ciphers, &claims.sub).await?;
 
     Ok(Json(CipherListResponse {
         data: ciphers,
@@ -244,7 +251,11 @@ pub async fn get_cipher(
 ) -> Result<Json<Cipher>, AppError> {
     let db = db::get_db(&env)?;
     let cipher = fetch_cipher_for_user(&db, &id, &claims.sub).await?;
-    Ok(Json(cipher.into()))
+    let mut cipher: Cipher = cipher.into();
+
+    attachments::hydrate_cipher_attachments(&db, env.as_ref(), &mut cipher, &claims.sub).await?;
+
+    Ok(Json(cipher))
 }
 
 /// GET /api/ciphers/{id}/details
@@ -304,8 +315,11 @@ pub async fn update_cipher_partial(
     db::touch_user_updated_at(&db, user_id).await?;
 
     let cipher = fetch_cipher_for_user(&db, &id, user_id).await?;
+    let mut cipher: Cipher = cipher.into();
 
-    Ok(Json(cipher.into()))
+    attachments::hydrate_cipher_attachments(&db, env.as_ref(), &mut cipher, &claims.sub).await?;
+
+    Ok(Json(cipher))
 }
 
 /// Request body for bulk cipher operations
@@ -464,9 +478,12 @@ pub async fn restore_cipher(
     .await?
     .ok_or(AppError::NotFound("Cipher not found".to_string()))?;
 
+    let mut cipher: Cipher = cipher_db.into();
+    attachments::hydrate_cipher_attachments(&db, env.as_ref(), &mut cipher, &claims.sub).await?;
+
     db::touch_user_updated_at(&db, &claims.sub).await?;
 
-    Ok(Json(cipher_db.into()))
+    Ok(Json(cipher))
 }
 
 /// Response for bulk restore operation
@@ -517,7 +534,7 @@ pub async fn restore_ciphers_bulk(
     // Batch SELECT using json_each() - avoid N+1 query problem
     let ids_json = serde_json::to_string(&ids).map_err(|_| AppError::Internal)?;
 
-    let restored_ciphers: Vec<Cipher> = db
+    let mut restored_ciphers: Vec<Cipher> = db
         .prepare(
             "SELECT * FROM ciphers WHERE user_id = ?1 AND id IN (SELECT value FROM json_each(?2))",
         )
@@ -528,6 +545,9 @@ pub async fn restore_ciphers_bulk(
         .into_iter()
         .map(|cipher| cipher.into())
         .collect();
+
+    attachments::hydrate_ciphers_attachments(&db, env.as_ref(), &mut restored_ciphers, &claims.sub)
+        .await?;
 
     db::touch_user_updated_at(&db, &claims.sub).await?;
 
@@ -559,7 +579,7 @@ pub async fn create_cipher_simple(
 
     let data_value = serde_json::to_value(&cipher_data).map_err(|_| AppError::Internal)?;
 
-    let cipher = Cipher {
+    let mut cipher = Cipher {
         id: Uuid::new_v4().to_string(),
         user_id: Some(claims.sub.clone()),
         organization_id: payload.organization_id.clone(),
@@ -575,6 +595,7 @@ pub async fn create_cipher_simple(
         edit: true,
         view_password: true,
         collection_ids: None,
+        attachments: None,
     };
 
     let data = serde_json::to_string(&cipher.data).map_err(|_| AppError::Internal)?;
@@ -596,6 +617,7 @@ pub async fn create_cipher_simple(
     .run()
     .await?;
 
+    attachments::hydrate_cipher_attachments(&db, env.as_ref(), &mut cipher, &claims.sub).await?;
     db::touch_user_updated_at(&db, &claims.sub).await?;
 
     Ok(Json(cipher))

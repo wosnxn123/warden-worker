@@ -37,6 +37,20 @@ CREATE TABLE IF NOT EXISTS ciphers (
     FOREIGN KEY (folder_id) REFERENCES folders(id) ON DELETE SET NULL
 );
 
+-- Attachments table for cipher file metadata
+CREATE TABLE IF NOT EXISTS attachments (
+    id TEXT PRIMARY KEY NOT NULL,
+    cipher_id TEXT NOT NULL,
+    file_name TEXT NOT NULL,
+    file_size INTEGER NOT NULL,
+    akey TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    organization_id TEXT,
+    FOREIGN KEY (cipher_id) REFERENCES ciphers(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_attachments_cipher ON attachments(cipher_id);
+
 -- TwoFactor table for two-factor authentication
 -- Types: 0=Authenticator(TOTP), 1=Email, 5=Remember, 8=RecoveryCode
 CREATE TABLE IF NOT EXISTS twofactor (

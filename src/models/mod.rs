@@ -1,3 +1,4 @@
+pub mod attachment;
 pub mod cipher;
 pub mod folder;
 pub mod import;

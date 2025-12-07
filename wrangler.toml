@@ -35,6 +35,15 @@ run_worker_first = ["/api/*", "/identity/*"]
 # Defaults to 30 days if not set. Set to 0 to disable auto-purge.
 # TRASH_AUTO_DELETE_DAYS = "30"
 
+# Attachment configuration (optional)
+# Maximum size for individual attachment files in bytes.
+# Defaults to no limit if not set.
+# ATTACHMENT_MAX_BYTES = "104857600"  # 100MB
+
+# Maximum total attachment storage per user in KB.
+# Defaults to no limit if not set.
+# ATTACHMENT_TOTAL_LIMIT_KB = "1048576"  # 1GB
+
 # Cron triggers for scheduled tasks
 # Runs daily at 03:00 UTC to purge soft-deleted ciphers
 [triggers]
@@ -45,6 +54,12 @@ binding = "vault1"
 database_name = "vault1"
 database_id = "${D1_DATABASE_ID}"
 migrations_dir = "migrations"
+
+# R2 bucket for file attachments (optional)
+# Uncomment and configure this section to enable file attachments
+# [[r2_buckets]]
+# binding = "ATTACHMENTS_BUCKET"
+# bucket_name = "warden-attachments"
 
 [env.dev]
 name = "warden-worker-dev"
@@ -62,6 +77,12 @@ simple = { limit = 5, period = 60 }
 
 [[env.dev.d1_databases]]
 binding = "vault1"
-database_name = "vault1-dev" 
+database_name = "vault1-dev"
 database_id = "${D1_DATABASE_ID_DEV}"
 migrations_dir = "migrations"
+
+# R2 bucket for file attachments in dev environment (optional)
+# Uncomment and configure this section to enable file attachments
+# [[env.dev.r2_buckets]]
+# binding = "ATTACHMENTS_BUCKET"
+# bucket_name = "warden-attachments-dev"

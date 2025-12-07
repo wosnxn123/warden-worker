@@ -6,8 +6,8 @@ use std::sync::Arc;
 use worker::Env;
 
 use crate::handlers::{
-    accounts, ciphers, config, devices, emergency_access, folders, identity, import, sync,
-    twofactor, webauth,
+    accounts, attachments, ciphers, config, devices, emergency_access, folders, identity, import,
+    sync, twofactor, webauth,
 };
 
 pub fn api_router(env: Env) -> Router {
@@ -54,6 +54,35 @@ pub fn api_router(env: Env) -> Router {
         .route(
             "/api/ciphers/{id}/details",
             get(ciphers::get_cipher_details),
+        )
+        // Attachments
+        .route(
+            "/api/ciphers/{id}/attachment/v2",
+            post(attachments::create_attachment_v2),
+        )
+        .route(
+            "/api/ciphers/{id}/attachment",
+            post(attachments::upload_attachment_legacy),
+        )
+        .route(
+            "/api/ciphers/{id}/attachment/{attachment_id}",
+            post(attachments::upload_attachment_v2_data),
+        )
+        .route(
+            "/api/ciphers/{id}/attachment/{attachment_id}",
+            get(attachments::get_attachment),
+        )
+        .route(
+            "/api/ciphers/{id}/attachment/{attachment_id}",
+            delete(attachments::delete_attachment),
+        )
+        .route(
+            "/api/ciphers/{id}/attachment/{attachment_id}/download",
+            get(attachments::download_attachment),
+        )
+        .route(
+            "/api/ciphers/{id}/attachment/{attachment_id}/delete",
+            post(attachments::delete_attachment_post),
         )
         .route("/api/ciphers/{id}", put(ciphers::update_cipher))
         .route("/api/ciphers/{id}", post(ciphers::update_cipher))

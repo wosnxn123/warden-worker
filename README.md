@@ -14,12 +14,17 @@ Warden aims to solve this problem by leveraging the Cloudflare Workers ecosystem
 ## Features
 
 *   **Core Vault Functionality:** All your basic vault operations are supported, including creating, reading, updating, and deleting ciphers and folders.
+*   **File Attachments:** Store files and documents with your passwords using Cloudflare R2 (optional feature).
 *   **TOTP Support:** Store and generate Time-based One-Time Passwords for your accounts.
 *   **Bitwarden Compatible:** Works with the official Bitwarden browser extensions and app on both Android and iOS.
 *   **Free to Host:** Runs on Cloudflare's free tier.
 *   **Low Maintenance:** Deploy it once and forget about it.
 *   **Secure:** Your data is stored in your own Cloudflare D1 database.
 *   **Easy to Deploy:** Get up and running in minutes with the Wrangler CLI.
+
+### Attachments Support
+
+Warden now supports file attachments using Cloudflare R2 storage. Attachments are optional and require manual configuration to enable. See the deployment sections below for specific setup instructions. Be aware that R2 may incur additional costs, see [Cloudflare R2 pricing](https://developers.cloudflare.com/r2/pricing/) for details.
 
 ## Current Status
 
@@ -36,8 +41,6 @@ Warden aims to solve this problem by leveraging the Cloudflare Workers ecosystem
 
 There are no immediate plans to implement these features. The primary goal of this project is to provide a simple, free, and low-maintenance personal password manager.
 
-Attachments are **not yet implemented**. They will be added later using Cloudflare R2; for now, attachment upload/download endpoints are not available.
-
 ## Compatibility
 
 *   **Browser Extensions:** Chrome, Firefox, Safari, etc. (Tested 2025.11.1 on Chrome)
@@ -51,7 +54,11 @@ Attachments are **not yet implemented**. They will be added later using Cloudfla
 *   A Cloudflare account.
 *   The [Wrangler CLI](https://developers.cloudflare.com/workers/wrangler/get-started/) installed and configured.
 
-### Deployment
+You can choose both of the following deployment methods:
+ - [CLI Deployment](#cli-deployment)
+ - [CI/CD Deployment with GitHub Actions](#cicd-deployment-with-github-actions)
+
+### CLI Deployment
 
 1.  **Clone the repository:**
 
@@ -66,7 +73,20 @@ Attachments are **not yet implemented**. They will be added later using Cloudfla
     wrangler d1 create warden-db
     ```
 
-3.  **Configure your Database ID:**
+3.  **(Optional) Enable R2 Bucket for Attachments:**
+
+    If you want to use file attachments:
+
+    ```bash
+    # Create the production bucket
+    wrangler r2 bucket create warden-attachments
+    ```
+
+    Then enable the R2 binding in `wrangler.toml` by uncommenting the R2 bucket configuration sections.
+
+    **Note:** Attachments are optional. If you don't enable R2 bindings, attachment functionality will be disabled but all other features will work normally.
+
+4.  **Configure your Database ID:**
 
     When you create a D1 database, Wrangler will output the `database_id`. To avoid committing this secret to your repository, this project uses an environment variable to configure the database ID.
 
@@ -91,7 +111,7 @@ Attachments are **not yet implemented**. They will be added later using Cloudfla
     wrangler deploy
     ```
 
-4.  **Download the frontend (Web Vault):**
+5.  **Download the frontend (Web Vault):**
 
     ```bash
     # Get latest version tag
@@ -110,7 +130,7 @@ Attachments are **not yet implemented**. They will be added later using Cloudfla
     rm bw_web_${LATEST_TAG}.tar.gz
     ```
 
-5.  **Set up database and deploy the worker:**
+6.  **Set up database and deploy the worker:**
 
     ```bash
     # Only run once before first deployment
@@ -123,13 +143,13 @@ Attachments are **not yet implemented**. They will be added later using Cloudfla
 
     This will deploy the worker and set up the necessary database tables.
 
-6. **Set environment variables** as `Secret`
+7. **Set environment variables** as `Secret`
 
 - `ALLOWED_EMAILS` your-email@example.com (supports glob patterns like `*@example.com`)
 - `JWT_SECRET` a long random string
 - `JWT_REFRESH_SECRET` a long random string
 
-7.  **Configure your Bitwarden client:**
+8.  **Configure your Bitwarden client:**
 
     In your Bitwarden client, go to the self-hosted login screen and enter the URL of your deployed worker (e.g., `https://warden-worker.your-username.workers.dev`).
 
@@ -165,13 +185,29 @@ Add the following secrets to your GitHub repository (`Settings > Secrets and var
 
 2.  **Configure the required secrets** in your repository settings
 
-3.  **Manually trigger the `Build` Action** from the GitHub Actions tab in your repository
+3.  **(Optional) Enable R2 bucket for attachments:**
 
-4.  **Monitor the deployment** in the Actions tab of your repository
+    If you want to use file attachments:
 
-5. **Set up tables in database manually** in the Cloudflare console
+    1. **Create R2 buckets:**
+       - Log in to [Cloudflare Dashboard](https://dash.cloudflare.com/)
+       - Go to **Storage & databases** → **R2** → **Create bucket**
+       - Create buckets named `warden-attachments`
 
-6.  **Set environment variables** as `secret` in the Cloudflare console (following the command line deployment steps):
+    2. **Add R2 bindings:**
+       - Go to **Workers & Pages** → Select your `warden-worker`
+       - Click **Settings** → **Bindings**
+       - Click **Add binding** → **R2 bucket**
+       - Variable name: `ATTACHMENTS_BUCKET`
+       - R2 bucket: `warden-attachments`
+
+4.  **Manually trigger the `Build` Action** from the GitHub Actions tab in your repository
+
+5.  **Monitor the deployment** in the Actions tab of your repository
+
+6. **Set up tables in database manually** in the Cloudflare console
+
+7.  **Set environment variables** as `secret` in the Cloudflare console (following the command line deployment steps):
     - `ALLOWED_EMAILS` your-email@example.com (supports glob patterns like `*@example.com`)
     - `JWT_SECRET` a long random string
     - `JWT_REFRESH_SECRET` a long random string
@@ -317,6 +353,20 @@ You can configure the following environment variables in `wrangler.toml` under t
 
     *   Set to `true` to DISABLE the time step drift
     *   **Note:** This setting only affects the TOTP validation. It does NOT affect the actual TOTP generation.
+
+*   **`ATTACHMENT_MAX_BYTES`** (Optional, For attachments only, Default: no limit)
+
+    Maximum size for individual attachment files in bytes
+
+    *   Set to a positive value to limit the size of individual attachment files
+    *   Example: `ATTACHMENT_MAX_BYTES = "104857600"` to limit individual attachment files to 100MB
+
+*   **`ATTACHMENT_TOTAL_LIMIT_KB`** (Optional, For attachments only, Default: no limit)
+
+    Maximum total attachment storage per user in KB
+
+    *   Set to a positive value to limit the total attachment storage per user
+    *   Example: `ATTACHMENT_TOTAL_LIMIT_KB = "1048576"` to limit the total attachment storage per user to 1GB
 
 ### Scheduled Tasks (Cron)
 

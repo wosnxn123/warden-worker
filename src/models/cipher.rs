@@ -1,6 +1,8 @@
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{json, Map, Value};
 
+use crate::models::attachment::AttachmentResponse;
+
 // Cipher types:
 //   Login = 1,
 //   SecureNote = 2,
@@ -123,6 +125,8 @@ pub struct Cipher {
     pub view_password: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub collection_ids: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub attachments: Option<Vec<AttachmentResponse>>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -160,6 +164,7 @@ impl Into<Cipher> for CipherDBModel {
             edit: true,
             view_password: true,
             collection_ids: None,
+            attachments: None,
         }
     }
 }
@@ -198,6 +203,7 @@ impl Serialize for Cipher {
         response_map.insert("revisionDate".to_string(), json!(self.updated_at));
         response_map.insert("creationDate".to_string(), json!(self.created_at));
         response_map.insert("deletedDate".to_string(), json!(self.deleted_at));
+        response_map.insert("attachments".to_string(), json!(self.attachments));
 
         if let Some(data_obj) = self.data.as_object() {
             let data_clone = data_obj.clone();

@@ -7,6 +7,7 @@ use crate::{
     auth::Claims,
     db,
     error::AppError,
+    handlers::attachments,
     models::{
         cipher::{Cipher, CipherDBModel},
         folder::{Folder, FolderResponse},
@@ -62,6 +63,9 @@ pub async fn get_sync_data(
         )
         .map(|cipher| cipher.into())
         .collect::<Vec<Cipher>>();
+
+    let mut ciphers = ciphers;
+    attachments::hydrate_ciphers_attachments(&db, env.as_ref(), &mut ciphers, &user_id).await?;
 
     let profile = Profile::from_user(user)?;
 
