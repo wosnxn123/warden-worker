@@ -112,7 +112,7 @@ function extractTokenFromQuery(url) {
 
 // Generate ISO timestamp string
 function nowString() {
-  return new Date().toISOString().replace("T", " ").replace("Z", "");
+  return new Date().toISOString();
 }
 
 // Helper to get env var with fallback
