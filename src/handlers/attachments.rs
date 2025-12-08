@@ -1,21 +1,14 @@
 use std::{collections::HashMap, sync::Arc};
 
-use axum::{
-    body::Bytes,
-    extract::{Multipart, Path, Query, State},
-    http::{header, StatusCode},
-    response::Response,
-    Extension, Json,
-};
+use axum::{body::Bytes, extract::{Multipart, Path, State}, Extension, Json};
 use chrono::Utc;
-use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
+use jsonwebtoken::{encode, EncodingKey, Header};
 use log;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 use worker::{
-    query, wasm_bindgen::JsValue, Bucket, D1Database, Env, Headers as WorkerHeaders, HttpMetadata,
-    Response as WorkerResponse,
+    query, wasm_bindgen::JsValue, Bucket, D1Database, Env, HttpMetadata,
 };
 
 use crate::{
@@ -78,11 +71,6 @@ struct AttachmentDownloadClaims {
 
 #[derive(Debug, Deserialize, Default)]
 #[serde(default)]
-pub struct AttachmentDownloadQuery {
-    pub token: Option<String>,
-}
-
-#[derive(Deserialize)]
 struct AttachmentKeyRow {
     cipher_id: String,
     id: String,
@@ -414,64 +402,6 @@ pub async fn delete_attachment_post(
     .await
 }
 
-/// GET /api/ciphers/{cipher_id}/attachment/{attachment_id}/download
-#[worker::send]
-pub async fn download_attachment(
-    State(env): State<Arc<Env>>,
-    Path((cipher_id, attachment_id)): Path<(String, String)>,
-    Query(query): Query<AttachmentDownloadQuery>,
-) -> Result<Response, AppError> {
-    let bucket = require_bucket(&env)?;
-    let db = db::get_db(&env)?;
-
-    let token = query
-        .token
-        .ok_or_else(|| AppError::Unauthorized("Missing download token".to_string()))?;
-    let user_id = validate_download_token(&env, &token, &cipher_id, &attachment_id)?;
-
-    let cipher = ensure_cipher_for_user(&db, &cipher_id, &user_id).await?;
-    let attachment = fetch_attachment(&db, &attachment_id).await?;
-
-    if attachment.cipher_id != cipher.id {
-        return Err(AppError::BadRequest(
-            "Attachment does not belong to cipher".to_string(),
-        ));
-    }
-
-    let object = bucket
-        .get(attachment.r2_key())
-        .execute()
-        .await
-        .map_err(AppError::Worker)?
-        .ok_or_else(|| AppError::NotFound("Attachment not found".to_string()))?;
-
-    let content_length = object.size();
-    let http_metadata = object.http_metadata();
-
-    let response_body = object
-        .body()
-        .ok_or_else(|| AppError::NotFound("Attachment data not found".to_string()))?
-        .response_body()
-        .map_err(AppError::Worker)?;
-
-    let headers = WorkerHeaders::new();
-    let content_type = http_metadata
-        .content_type
-        .unwrap_or_else(|| "application/octet-stream".to_string());
-    headers
-        .set(header::CONTENT_TYPE.as_str(), &content_type)
-        .map_err(AppError::Worker)?;
-    headers
-        .set(header::CONTENT_LENGTH.as_str(), &content_length.to_string())
-        .map_err(AppError::Worker)?;
-
-    let response = WorkerResponse::from_body(response_body)
-        .map_err(AppError::Worker)?
-        .with_status(StatusCode::OK.as_u16())
-        .with_headers(headers);
-
-    Ok(response.into())
-}
 
 /// Attach attachment information to Cipher (used by other handlers)
 pub async fn hydrate_cipher_attachments(
@@ -836,27 +766,6 @@ fn build_download_token(
         &EncodingKey::from_secret(secret.as_bytes()),
     )
     .map_err(AppError::from)
-}
-
-fn validate_download_token(
-    env: &Env,
-    token: &str,
-    cipher_id: &str,
-    attachment_id: &str,
-) -> Result<String, AppError> {
-    let secret = jwt_secret(env)?;
-    let data = decode::<AttachmentDownloadClaims>(
-        token,
-        &DecodingKey::from_secret(secret.as_bytes()),
-        &Validation::default(),
-    )?;
-
-    let claims = data.claims;
-    if claims.cipher_id != cipher_id || claims.attachment_id != attachment_id {
-        return Err(AppError::Unauthorized("Invalid download token".to_string()));
-    }
-
-    Ok(claims.sub)
 }
 
 fn upload_url(

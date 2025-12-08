@@ -1,9 +1,13 @@
 /**
  * JS Wrapper Entry Point for Warden Worker
  *
- * This wrapper intercepts attachment upload requests for zero-copy streaming
- * uploads to R2. Workers R2 binding can accept request.body directly.
+ * This wrapper intercepts attachment upload and download requests for zero-copy streaming
+ * to/from R2. Workers R2 binding can accept request.body directly for uploads,
+ * and r2Object.body can be passed directly to Response for downloads.
  * See: https://blog.cloudflare.com/zh-cn/r2-ga/
+ *
+ * This avoids CPU time consumption that would occur if the body went through
+ * the Rust/WASM layer with axum body conversion.
  *
  * All other requests are passed through to the Rust WASM module.
  */
@@ -78,6 +82,22 @@ function parseAzureUploadPath(path) {
     parts[1] === "ciphers" &&
     parts[3] === "attachment" &&
     parts[5] === "azure-upload"
+  ) {
+    return { cipherId: parts[2], attachmentId: parts[4] };
+  }
+  return null;
+}
+
+// Parse download route: /api/ciphers/{id}/attachment/{attachment_id}/download
+function parseDownloadPath(path) {
+  const parts = path.replace(/^\//, "").split("/");
+  // Expected: ["api", "ciphers", "{cipher_id}", "attachment", "{attachment_id}", "download"]
+  if (
+    parts.length === 6 &&
+    parts[0] === "api" &&
+    parts[1] === "ciphers" &&
+    parts[3] === "attachment" &&
+    parts[5] === "download"
   ) {
     return { cipherId: parts[2], attachmentId: parts[4] };
   }
@@ -367,6 +387,110 @@ async function handleAzureUpload(request, env, cipherId, attachmentId, token) {
   return new Response(null, { status: 201 });
 }
 
+// Handle download with zero-copy streaming
+async function handleDownload(request, env, cipherId, attachmentId, token) {
+  // Get R2 bucket
+  const bucket = env.ATTACHMENTS_BUCKET;
+  if (!bucket) {
+    return new Response(JSON.stringify({ error: "Attachments are not enabled" }), {
+      status: 400,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  // Get D1 database
+  const db = env.vault1;
+  if (!db) {
+    return new Response(JSON.stringify({ error: "Database not available" }), {
+      status: 500,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  // Validate JWT token
+  let claims;
+  try {
+    const secret = env.JWT_SECRET?.toString?.() || env.JWT_SECRET;
+    if (!secret) {
+      throw new Error("JWT_SECRET not configured");
+    }
+    claims = await verifyJWT(token, secret);
+  } catch (err) {
+    return new Response(JSON.stringify({ error: `Invalid token: ${err.message}` }), {
+      status: 401,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  // Validate token claims match the request
+  if (claims.cipher_id !== cipherId || claims.attachment_id !== attachmentId) {
+    return new Response(JSON.stringify({ error: "Invalid download token" }), {
+      status: 401,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  const userId = claims.sub;
+
+  // Verify cipher belongs to user
+  const cipher = await db
+    .prepare("SELECT * FROM ciphers WHERE id = ?1 AND user_id = ?2")
+    .bind(cipherId, userId)
+    .first();
+
+  if (!cipher) {
+    return new Response(JSON.stringify({ error: "Cipher not found" }), {
+      status: 404,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  // Fetch attachment record
+  const attachment = await db
+    .prepare("SELECT * FROM attachments WHERE id = ?1")
+    .bind(attachmentId)
+    .first();
+
+  if (!attachment) {
+    return new Response(JSON.stringify({ error: "Attachment not found" }), {
+      status: 404,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  if (attachment.cipher_id !== cipherId) {
+    return new Response(
+      JSON.stringify({ error: "Attachment does not belong to cipher" }),
+      { status: 400, headers: { "Content-Type": "application/json" } }
+    );
+  }
+
+  // Build R2 key
+  const r2Key = `${cipherId}/${attachmentId}`;
+
+  // Get object from R2
+  const r2Object = await bucket.get(r2Key);
+  if (!r2Object) {
+    return new Response(JSON.stringify({ error: "Attachment not found in storage" }), {
+      status: 404,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  // Build response headers
+  const headers = new Headers();
+  const contentType = r2Object.httpMetadata?.contentType || "application/octet-stream";
+  headers.set("Content-Type", contentType);
+  headers.set("Content-Length", r2Object.size.toString());
+
+  // Return response with R2 object body directly - zero-copy streaming!
+  // The Workers runtime streams the body directly to the client without consuming CPU time
+  return new Response(r2Object.body, {
+    status: 200,
+    headers,
+  });
+}
+
 // Main fetch handler
 export default {
   async fetch(request, env, ctx) {
@@ -386,6 +510,27 @@ export default {
             token
           );
         }
+      }
+    }
+
+    // Intercept GET requests to download endpoint for zero-copy streaming
+    if (request.method === "GET") {
+      const parsed = parseDownloadPath(url.pathname);
+      if (parsed) {
+        const token = extractTokenFromQuery(request.url);
+        if (!token) {
+          return new Response(
+            JSON.stringify({ error: "Missing download token" }),
+            { status: 401, headers: { "Content-Type": "application/json" } }
+          );
+        }
+        return handleDownload(
+          request,
+          env,
+          parsed.cipherId,
+          parsed.attachmentId,
+          token
+        );
       }
     }
 
