@@ -86,3 +86,16 @@ migrations_dir = "migrations"
 # [[env.dev.r2_buckets]]
 # binding = "ATTACHMENTS_BUCKET"
 # bucket_name = "warden-attachments-dev"
+
+# logs
+[env.dev.observability]
+[env.dev.observability.logs]
+enabled = true
+head_sampling_rate = 1
+invocation_logs = true
+persist = true
+
+[env.dev.observability.traces]
+enabled = false
+persist = true
+head_sampling_rate = 1

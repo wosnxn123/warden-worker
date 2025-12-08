@@ -189,17 +189,14 @@ Add the following secrets to your GitHub repository (`Settings > Secrets and var
 
     If you want to use file attachments:
 
-    1. **Create R2 buckets:**
-       - Log in to [Cloudflare Dashboard](https://dash.cloudflare.com/)
+    1. **Create R2 buckets in Cloudflare Dashboard before running the action:**
        - Go to **Storage & databases** → **R2** → **Create bucket**
-       - Create buckets named `warden-attachments`
+       - Create a production bucket (e.g., `warden-attachments`)
 
-    2. **Add R2 bindings:**
-       - Go to **Workers & Pages** → Select your `warden-worker`
-       - Click **Settings** → **Bindings**
-       - Click **Add binding** → **R2 bucket**
-       - Variable name: `ATTACHMENTS_BUCKET`
-       - R2 bucket: `warden-attachments`
+    2. **Add the bucket names as GitHub Action secrets:**
+       - `R2_NAME` → production bucket name
+
+    The workflows will auto-append the `ATTACHMENTS_BUCKET` binding into `wrangler.toml` when these secrets are present - no manual binding in the Cloudflare console is required.
 
 4.  **Manually trigger the `Build` Action** from the GitHub Actions tab in your repository
 
