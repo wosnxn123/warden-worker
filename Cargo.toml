@@ -23,12 +23,14 @@ js-sys = "0.3"
 wasm-bindgen-futures = "0.4"
 web-sys = { version = "0.3", features = ["Crypto", "CryptoKey", "SubtleCrypto", "WorkerGlobalScope", "Pbkdf2Params"] }
 console_error_panic_hook = "0.1.7"
+wasm-streams = "0.4"
 
 # Axum and Routing
 axum = { version = "0.8", default-features = false, features=["json", "macros", "form", "multipart", "query"] }
 tower-service = "0.3"
 tower-http = { version = "0.5", features = ["cors"] }
 bytes = "1"
+futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
 
 # Data & Serialization
 serde = { version = "1.0", features = ["derive"] }

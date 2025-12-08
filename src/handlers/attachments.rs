@@ -1,6 +1,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use axum::{
+    body::Bytes,
     extract::{Multipart, Path, Query, State},
     http::{header, StatusCode},
     response::Response,
@@ -170,7 +171,7 @@ pub async fn create_attachment_v2(
     .await?;
 
     // Return upload URL pointing to local upload endpoint
-    let url = upload_url(&cipher_id, &attachment_id);
+    let url = upload_url(&env, &base_url, &cipher_id, &attachment_id, &claims.sub)?;
     let mut cipher_response: Cipher = cipher.into();
     hydrate_cipher_attachments(&db, &env, &base_url, &mut cipher_response, &claims.sub).await?;
 
@@ -181,7 +182,7 @@ pub async fn create_attachment_v2(
         object: "attachment-fileUpload".to_string(),
         attachment_id,
         url,
-        file_upload_type: 0, // Direct
+        file_upload_type: 1, // Direct PUT with token
         cipher_response,
     }))
 }
@@ -385,8 +386,9 @@ pub async fn delete_attachment(
     db::touch_user_updated_at(&db, &claims.sub).await?;
 
     // Reload cipher to return fresh updated_at and attachments state
-    let mut cipher_response: Cipher =
-        ensure_cipher_for_user(&db, &cipher_id, &claims.sub).await?.into();
+    let mut cipher_response: Cipher = ensure_cipher_for_user(&db, &cipher_id, &claims.sub)
+        .await?
+        .into();
     hydrate_cipher_attachments(&db, &env, &base_url, &mut cipher_response, &claims.sub).await?;
 
     Ok(Json(AttachmentDeleteResponse {
@@ -536,10 +538,7 @@ fn is_not_found_error(err: &worker::Error) -> bool {
     msg.contains("NoSuchKey") || msg.contains("404") || msg.contains("NotFound")
 }
 
-pub(crate) async fn delete_r2_objects(
-    bucket: &Bucket,
-    keys: &[String],
-) -> Result<(), AppError> {
+pub(crate) async fn delete_r2_objects(bucket: &Bucket, keys: &[String]) -> Result<(), AppError> {
     for key in keys {
         if let Err(err) = bucket.delete(key).await {
             if !is_not_found_error(&err) {
@@ -625,10 +624,6 @@ pub(crate) async fn list_attachment_keys_for_soft_deleted_before(
         .map_err(|_| AppError::Database)?;
 
     Ok(map_rows_to_keys(rows))
-}
-
-fn upload_url(cipher_id: &str, attachment_id: &str) -> String {
-    format!("/api/ciphers/{cipher_id}/attachment/{attachment_id}")
 }
 
 fn download_url(
@@ -746,16 +741,8 @@ async fn upload_to_r2(
 
 async fn read_multipart(
     multipart: &mut Multipart,
-) -> Result<
-    (
-        axum::body::Bytes,
-        Option<String>,
-        Option<String>,
-        Option<String>,
-    ),
-    AppError,
-> {
-    let mut file_bytes: Option<axum::body::Bytes> = None;
+) -> Result<(Bytes, Option<String>, Option<String>, Option<String>), AppError> {
+    let mut file_bytes: Option<Bytes> = None;
     let mut content_type: Option<String> = None;
     let mut key: Option<String> = None;
     let mut file_name: Option<String> = None;
@@ -870,6 +857,20 @@ fn validate_download_token(
     }
 
     Ok(claims.sub)
+}
+
+fn upload_url(
+    env: &Env,
+    base_url: &str,
+    cipher_id: &str,
+    attachment_id: &str,
+    user_id: &str,
+) -> Result<String, AppError> {
+    let token = build_download_token(env, user_id, cipher_id, attachment_id)?;
+    let normalized_base = base_url.trim_end_matches('/');
+    Ok(format!(
+        "{normalized_base}/api/ciphers/{cipher_id}/attachment/{attachment_id}/azure-upload?token={token}"
+    ))
 }
 
 fn jwt_secret(env: &Env) -> Result<String, AppError> {

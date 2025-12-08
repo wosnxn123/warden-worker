@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use axum::{extract::DefaultBodyLimit, Extension};
 use tower_http::cors::{Any, CorsLayer};
 use tower_service::Service;
@@ -25,13 +27,15 @@ pub async fn main(
     console_error_panic_hook::set_once();
     let _ = console_log::init_with_level(log::Level::Debug);
 
-    // Extract base URL from request URI
-    let uri = req.uri();
+    // Extract base URL from the incoming request
+    let uri = req.uri().clone();
     let base_url = format!(
         "{}://{}",
         uri.scheme_str().unwrap_or("https"),
         uri.authority().map(|a| a.as_str()).unwrap_or("localhost")
     );
+
+    let env = Arc::new(env);
 
     // Allow all origins for CORS, which is typical for a public API like Bitwarden's.
     let cors = CorsLayer::new()
@@ -41,7 +45,7 @@ pub async fn main(
 
     let body_limit = attachment_body_limit_bytes(&env);
 
-    let mut app = router::api_router(env)
+    let mut app = router::api_router((*env).clone())
         .layer(Extension(BaseUrl(base_url)))
         .layer(cors)
         // axum 默认 body 限制为 2MiB，附件上传需要更大的上限
