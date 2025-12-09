@@ -2,6 +2,8 @@ name = "warden-worker"
 main = "src/entry.js"
 compatibility_date = "2025-09-19"
 keep_vars = true
+workers_dev = false
+preview_url = false
 
 [build]
 command = "cargo install -q worker-build && worker-build --release"
@@ -44,6 +46,10 @@ run_worker_first = ["/api/*", "/identity/*"]
 # Defaults to no limit if not set.
 # ATTACHMENT_TOTAL_LIMIT_KB = "1048576"  # 1GB
 
+# Number of seconds to keep attachment upload and download URLs valid.
+# Defaults to 300 seconds (5 minutes) if not set.
+# ATTACHMENT_TTL_SECS = "300"
+
 # Cron triggers for scheduled tasks
 # Runs daily at 03:00 UTC to purge soft-deleted ciphers
 [triggers]
@@ -64,6 +70,8 @@ migrations_dir = "migrations"
 [env.dev]
 name = "warden-worker-dev"
 keep_vars = true
+workers_dev = false
+preview_url = false
 
 # Dev environment also needs cron triggers
 [env.dev.triggers]
