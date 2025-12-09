@@ -406,7 +406,8 @@ pub async fn hydrate_cipher_attachments(
         return Ok(());
     }
 
-    let mut map = load_attachment_map(db, &[cipher.id.clone()]).await?;
+    let ids_json = serde_json::to_string(&[&cipher.id]).map_err(|_| AppError::Internal)?;
+    let mut map = load_attachment_map_json(db, &ids_json, "$").await?;
     if let Some(list) = map.remove(&cipher.id) {
         if !list.is_empty() {
             cipher.attachments = Some(list);
@@ -415,11 +416,15 @@ pub async fn hydrate_cipher_attachments(
     Ok(())
 }
 
-/// Batch attach attachments to multiple Ciphers
+/// Batch attach attachments to multiple Ciphers.
+/// - If `json_body` and `ids_path` are provided, use them directly (e.g. body + "$.ids").
+/// - Otherwise extract ids from ciphers and use "$" as path.
 pub async fn hydrate_ciphers_attachments(
     db: &D1Database,
     env: &Env,
     ciphers: &mut [Cipher],
+    json_body: Option<&str>,
+    ids_path: Option<&str>,
 ) -> Result<(), AppError> {
     if !attachments_enabled(env) {
         for cipher in ciphers.iter_mut() {
@@ -428,8 +433,17 @@ pub async fn hydrate_ciphers_attachments(
         return Ok(());
     }
 
-    let ids: Vec<String> = ciphers.iter().map(|c| c.id.clone()).collect();
-    let mut map = load_attachment_map(db, &ids).await?;
+    let owned_json: String;
+    let (body, path) = match (json_body, ids_path) {
+        (Some(b), Some(p)) => (b, p),
+        _ => {
+            let ids: Vec<&str> = ciphers.iter().map(|c| c.id.as_str()).collect();
+            owned_json = serde_json::to_string(&ids).map_err(|_| AppError::Internal)?;
+            (owned_json.as_str(), "$")
+        }
+    };
+
+    let mut map = load_attachment_map_json(db, body, path).await?;
 
     for cipher in ciphers.iter_mut() {
         if let Some(list) = map.remove(&cipher.id) {
@@ -473,22 +487,21 @@ fn map_rows_to_keys(rows: Vec<AttachmentKeyRow>) -> Vec<String> {
         .collect()
 }
 
-pub(crate) async fn list_attachment_keys_for_cipher_ids(
+/// List attachment keys for given cipher IDs.
+/// - `json_body`: JSON text containing the ids array
+/// - `ids_path`: path to ids array within json_body (e.g. "$.ids" or "$" if top-level)
+pub(crate) async fn list_attachment_keys_for_cipher_ids_json(
     db: &D1Database,
-    cipher_ids: &[String],
+    json_body: &str,
+    ids_path: &str,
     user_id: Option<&str>,
 ) -> Result<Vec<String>, AppError> {
-    if cipher_ids.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let ids_json = serde_json::to_string(cipher_ids).map_err(|_| AppError::Internal)?;
-
-    let mut sql = "SELECT a.cipher_id, a.id FROM attachments a JOIN ciphers c ON a.cipher_id = c.id WHERE c.id IN (SELECT value FROM json_each(?1))".to_string();
-    let mut params: Vec<worker::wasm_bindgen::JsValue> = vec![ids_json.into()];
+    let mut sql = "SELECT a.cipher_id, a.id FROM attachments a JOIN ciphers c ON a.cipher_id = c.id WHERE c.id IN (SELECT value FROM json_each(?1, ?2))".to_string();
+    let mut params: Vec<worker::wasm_bindgen::JsValue> =
+        vec![json_body.to_owned().into(), ids_path.to_owned().into()];
 
     if let Some(uid) = user_id {
-        sql.push_str(" AND c.user_id = ?2");
+        sql.push_str(" AND c.user_id = ?3");
         params.push(uid.into());
     }
 
@@ -598,19 +611,16 @@ async fn fetch_attachment(db: &D1Database, attachment_id: &str) -> Result<Attach
         .ok_or_else(|| AppError::NotFound("Attachment not found".to_string()))
 }
 
-async fn load_attachment_map(
+async fn load_attachment_map_json(
     db: &D1Database,
-    cipher_ids: &[String],
+    json_body: &str,
+    ids_path: &str,
 ) -> Result<HashMap<String, Vec<AttachmentResponse>>, AppError> {
-    if cipher_ids.is_empty() {
-        return Ok(HashMap::new());
-    }
-
-    let ids_json = serde_json::to_string(cipher_ids).map_err(|_| AppError::Internal)?;
-
     let attachments: Vec<AttachmentDB> = db
-        .prepare("SELECT * FROM attachments WHERE cipher_id IN (SELECT value FROM json_each(?1))")
-        .bind(&[ids_json.into()])?
+        .prepare(
+            "SELECT * FROM attachments WHERE cipher_id IN (SELECT value FROM json_each(?1, ?2))",
+        )
+        .bind(&[json_body.to_owned().into(), ids_path.to_owned().into()])?
         .all()
         .await
         .map_err(|_| AppError::Database)?

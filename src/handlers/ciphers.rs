@@ -1,12 +1,10 @@
-use super::get_batch_size;
 use axum::{extract::State, Extension, Json};
 use chrono::{DateTime, Utc};
 use log; // Used for warning logs on parse failures
-use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
 use uuid::Uuid;
-use worker::{query, D1PreparedStatement, Env};
+use worker::{query, Env};
 
 use crate::auth::Claims;
 use crate::db;
@@ -235,7 +233,7 @@ pub async fn list_ciphers(
 
     let mut ciphers: Vec<Cipher> = ciphers_db.into_iter().map(|c| c.into()).collect();
 
-    attachments::hydrate_ciphers_attachments(&db, env.as_ref(), &mut ciphers).await?;
+    attachments::hydrate_ciphers_attachments(&db, env.as_ref(), &mut ciphers, None, None).await?;
 
     Ok(Json(CipherListResponse {
         data: ciphers,
@@ -324,13 +322,6 @@ pub async fn update_cipher_partial(
     Ok(Json(cipher))
 }
 
-/// Request body for bulk cipher operations
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CipherIdsData {
-    pub ids: Vec<String>,
-}
-
 /// Soft delete a single cipher (PUT /api/ciphers/{id}/delete)
 /// Sets deleted_at to current timestamp
 #[worker::send]
@@ -359,28 +350,22 @@ pub async fn soft_delete_cipher(
 }
 
 /// Soft delete multiple ciphers (PUT /api/ciphers/delete)
+/// Accepts raw JSON body and uses json_each with path to extract ids directly.
 #[worker::send]
 pub async fn soft_delete_ciphers_bulk(
     claims: Claims,
     State(env): State<Arc<Env>>,
-    Json(payload): Json<CipherIdsData>,
+    body: String,
 ) -> Result<Json<()>, AppError> {
     let db = db::get_db(&env)?;
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
-    let ids = payload.ids;
-
-    if ids.is_empty() {
-        return Ok(Json(()));
-    }
-
-    let ids_json = serde_json::to_string(&ids).map_err(|_| AppError::Internal)?;
 
     query!(
         &db,
-        "UPDATE ciphers SET deleted_at = ?1, updated_at = ?1 WHERE user_id = ?2 AND id IN (SELECT value FROM json_each(?3))",
+        "UPDATE ciphers SET deleted_at = ?1, updated_at = ?1 WHERE user_id = ?2 AND id IN (SELECT value FROM json_each(?3, '$.ids'))",
         now,
         claims.sub,
-        ids_json
+        body
     )
     .map_err(|_| AppError::Database)?
     .run()
@@ -403,9 +388,14 @@ pub async fn hard_delete_cipher(
 
     if attachments::attachments_enabled(env.as_ref()) {
         let bucket = attachments::require_bucket(env.as_ref())?;
-        let keys =
-            attachments::list_attachment_keys_for_cipher_ids(&db, &[id.clone()], Some(&claims.sub))
-                .await?;
+        let id_json = serde_json::to_string(&[&id]).map_err(|_| AppError::Internal)?;
+        let keys = attachments::list_attachment_keys_for_cipher_ids_json(
+            &db,
+            &id_json,
+            "$",
+            Some(&claims.sub),
+        )
+        .await?;
         attachments::delete_r2_objects(&bucket, &keys).await?;
     }
 
@@ -425,33 +415,32 @@ pub async fn hard_delete_cipher(
 }
 
 /// Hard delete multiple ciphers (DELETE /api/ciphers or POST /api/ciphers/delete)
+/// Accepts raw JSON body and uses json_each with path to extract ids directly.
 #[worker::send]
 pub async fn hard_delete_ciphers_bulk(
     claims: Claims,
     State(env): State<Arc<Env>>,
-    Json(payload): Json<CipherIdsData>,
+    body: String,
 ) -> Result<Json<()>, AppError> {
     let db = db::get_db(&env)?;
-    let ids = payload.ids;
-
-    if ids.is_empty() {
-        return Ok(Json(()));
-    }
-
-    let ids_json = serde_json::to_string(&ids).map_err(|_| AppError::Internal)?;
 
     if attachments::attachments_enabled(env.as_ref()) {
         let bucket = attachments::require_bucket(env.as_ref())?;
-        let keys =
-            attachments::list_attachment_keys_for_cipher_ids(&db, &ids, Some(&claims.sub)).await?;
+        let keys = attachments::list_attachment_keys_for_cipher_ids_json(
+            &db,
+            &body,
+            "$.ids",
+            Some(&claims.sub),
+        )
+        .await?;
         attachments::delete_r2_objects(&bucket, &keys).await?;
     }
 
     query!(
         &db,
-        "DELETE FROM ciphers WHERE user_id = ?1 AND id IN (SELECT value FROM json_each(?2))",
+        "DELETE FROM ciphers WHERE user_id = ?1 AND id IN (SELECT value FROM json_each(?2, '$.ids'))",
         claims.sub,
-        ids_json
+        body
     )
     .map_err(|_| AppError::Database)?
     .run()
@@ -515,34 +504,23 @@ pub struct BulkRestoreResponse {
 }
 
 /// Restore multiple ciphers (PUT /api/ciphers/restore)
+/// Accepts raw JSON body and uses json_each with path to extract ids directly.
 #[worker::send]
 pub async fn restore_ciphers_bulk(
     claims: Claims,
     State(env): State<Arc<Env>>,
-    Json(payload): Json<CipherIdsData>,
+    body: String,
 ) -> Result<Json<BulkRestoreResponse>, AppError> {
     let db = db::get_db(&env)?;
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
-    let ids = payload.ids;
 
-    if ids.is_empty() {
-        return Ok(Json(BulkRestoreResponse {
-            data: vec![],
-            object: "list".to_string(),
-            continuation_token: None,
-        }));
-    }
-
-    // Precompute JSON array for ids, used by both UPDATE and SELECT
-    let ids_json = serde_json::to_string(&ids).map_err(|_| AppError::Internal)?;
-
-    // Single bulk UPDATE using json_each()
+    // Single bulk UPDATE using json_each() with path
     query!(
         &db,
-        "UPDATE ciphers SET deleted_at = NULL, updated_at = ?1 WHERE user_id = ?2 AND id IN (SELECT value FROM json_each(?3))",
+        "UPDATE ciphers SET deleted_at = NULL, updated_at = ?1 WHERE user_id = ?2 AND id IN (SELECT value FROM json_each(?3, '$.ids'))",
         now,
         claims.sub,
-        ids_json.clone()
+        body
     )
     .map_err(|_| AppError::Database)?
     .run()
@@ -550,9 +528,9 @@ pub async fn restore_ciphers_bulk(
 
     let mut restored_ciphers: Vec<Cipher> = db
         .prepare(
-            "SELECT * FROM ciphers WHERE user_id = ?1 AND id IN (SELECT value FROM json_each(?2))",
+            "SELECT * FROM ciphers WHERE user_id = ?1 AND id IN (SELECT value FROM json_each(?2, '$.ids'))",
         )
-        .bind(&[claims.sub.clone().into(), ids_json.into()])?
+        .bind(&[claims.sub.clone().into(), body.clone().into()])?
         .all()
         .await?
         .results::<crate::models::cipher::CipherDBModel>()?
@@ -560,7 +538,14 @@ pub async fn restore_ciphers_bulk(
         .map(|cipher| cipher.into())
         .collect();
 
-    attachments::hydrate_ciphers_attachments(&db, env.as_ref(), &mut restored_ciphers).await?;
+    attachments::hydrate_ciphers_attachments(
+        &db,
+        env.as_ref(),
+        &mut restored_ciphers,
+        Some(&body),
+        Some("$.ids"),
+    )
+    .await?;
 
     db::touch_user_updated_at(&db, &claims.sub).await?;
 
