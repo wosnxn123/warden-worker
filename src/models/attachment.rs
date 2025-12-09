@@ -18,7 +18,8 @@ pub struct AttachmentDB {
 #[serde(rename_all = "camelCase")]
 pub struct AttachmentResponse {
     pub id: String,
-    pub url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
     pub file_name: String,
     pub size: String,
     pub size_name: String,
@@ -32,7 +33,7 @@ impl AttachmentDB {
         format!("{}/{}", self.cipher_id, self.id)
     }
 
-    pub fn to_response(&self, url: String) -> AttachmentResponse {
+    pub fn to_response(&self, url: Option<String>) -> AttachmentResponse {
         AttachmentResponse {
             id: self.id.clone(),
             url,

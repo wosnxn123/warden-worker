@@ -38,7 +38,6 @@ async fn fetch_cipher_for_user(
 pub async fn create_cipher(
     claims: Claims,
     State(env): State<Arc<Env>>,
-    Extension(BaseUrl(base_url)): Extension<BaseUrl>,
     Json(payload): Json<CreateCipherRequest>,
 ) -> Result<Json<Cipher>, AppError> {
     let db = db::get_db(&env)?;
@@ -97,7 +96,7 @@ pub async fn create_cipher(
     .run()
     .await?;
 
-    attachments::hydrate_cipher_attachments(&db, env.as_ref(), &base_url, &mut cipher, &claims.sub)
+    attachments::hydrate_cipher_attachments(&db, env.as_ref(), &mut cipher)
         .await?;
     db::touch_user_updated_at(&db, &claims.sub).await?;
 
@@ -108,7 +107,7 @@ pub async fn create_cipher(
 pub async fn update_cipher(
     claims: Claims,
     State(env): State<Arc<Env>>,
-    Extension(BaseUrl(base_url)): Extension<BaseUrl>,
+    Extension(BaseUrl(_base_url)): Extension<BaseUrl>,
     Path(id): Path<String>,
     Json(payload): Json<CipherRequestData>,
 ) -> Result<Json<Cipher>, AppError> {
@@ -210,7 +209,7 @@ pub async fn update_cipher(
     .run()
     .await?;
 
-    attachments::hydrate_cipher_attachments(&db, env.as_ref(), &base_url, &mut cipher, &claims.sub)
+    attachments::hydrate_cipher_attachments(&db, env.as_ref(), &mut cipher)
         .await?;
     db::touch_user_updated_at(&db, &claims.sub).await?;
 
@@ -222,7 +221,6 @@ pub async fn update_cipher(
 pub async fn list_ciphers(
     claims: Claims,
     State(env): State<Arc<Env>>,
-    Extension(BaseUrl(base_url)): Extension<BaseUrl>,
 ) -> Result<Json<CipherListResponse>, AppError> {
     let db = db::get_db(&env)?;
 
@@ -239,14 +237,7 @@ pub async fn list_ciphers(
 
     let mut ciphers: Vec<Cipher> = ciphers_db.into_iter().map(|c| c.into()).collect();
 
-    attachments::hydrate_ciphers_attachments(
-        &db,
-        env.as_ref(),
-        &base_url,
-        &mut ciphers,
-        &claims.sub,
-    )
-    .await?;
+    attachments::hydrate_ciphers_attachments(&db, env.as_ref(), &mut ciphers).await?;
 
     Ok(Json(CipherListResponse {
         data: ciphers,
@@ -260,14 +251,13 @@ pub async fn list_ciphers(
 pub async fn get_cipher(
     claims: Claims,
     State(env): State<Arc<Env>>,
-    Extension(BaseUrl(base_url)): Extension<BaseUrl>,
     Path(id): Path<String>,
 ) -> Result<Json<Cipher>, AppError> {
     let db = db::get_db(&env)?;
     let cipher = fetch_cipher_for_user(&db, &id, &claims.sub).await?;
     let mut cipher: Cipher = cipher.into();
 
-    attachments::hydrate_cipher_attachments(&db, env.as_ref(), &base_url, &mut cipher, &claims.sub)
+    attachments::hydrate_cipher_attachments(&db, env.as_ref(), &mut cipher)
         .await?;
 
     Ok(Json(cipher))
@@ -278,10 +268,9 @@ pub async fn get_cipher(
 pub async fn get_cipher_details(
     claims: Claims,
     state: State<Arc<Env>>,
-    extension: Extension<BaseUrl>,
     id: Path<String>,
 ) -> Result<Json<Cipher>, AppError> {
-    get_cipher(claims, state, extension, id).await
+    get_cipher(claims, state, id).await
 }
 
 /// PUT/POST /api/ciphers/{id}/partial
@@ -289,7 +278,6 @@ pub async fn get_cipher_details(
 pub async fn update_cipher_partial(
     claims: Claims,
     State(env): State<Arc<Env>>,
-    Extension(BaseUrl(base_url)): Extension<BaseUrl>,
     Path(id): Path<String>,
     Json(payload): Json<PartialCipherData>,
 ) -> Result<Json<Cipher>, AppError> {
@@ -334,7 +322,7 @@ pub async fn update_cipher_partial(
     let cipher = fetch_cipher_for_user(&db, &id, user_id).await?;
     let mut cipher: Cipher = cipher.into();
 
-    attachments::hydrate_cipher_attachments(&db, env.as_ref(), &base_url, &mut cipher, &claims.sub)
+    attachments::hydrate_cipher_attachments(&db, env.as_ref(), &mut cipher)
         .await?;
 
     Ok(Json(cipher))
@@ -482,7 +470,6 @@ pub async fn hard_delete_ciphers_bulk(
 pub async fn restore_cipher(
     claims: Claims,
     State(env): State<Arc<Env>>,
-    Extension(BaseUrl(base_url)): Extension<BaseUrl>,
     Path(id): Path<String>,
 ) -> Result<Json<Cipher>, AppError> {
     let db = db::get_db(&env)?;
@@ -513,7 +500,7 @@ pub async fn restore_cipher(
     .ok_or(AppError::NotFound("Cipher not found".to_string()))?;
 
     let mut cipher: Cipher = cipher_db.into();
-    attachments::hydrate_cipher_attachments(&db, env.as_ref(), &base_url, &mut cipher, &claims.sub)
+    attachments::hydrate_cipher_attachments(&db, env.as_ref(), &mut cipher)
         .await?;
 
     db::touch_user_updated_at(&db, &claims.sub).await?;
@@ -535,7 +522,6 @@ pub struct BulkRestoreResponse {
 pub async fn restore_ciphers_bulk(
     claims: Claims,
     State(env): State<Arc<Env>>,
-    Extension(BaseUrl(base_url)): Extension<BaseUrl>,
     Json(payload): Json<CipherIdsData>,
 ) -> Result<Json<BulkRestoreResponse>, AppError> {
     let db = db::get_db(&env)?;
@@ -582,14 +568,7 @@ pub async fn restore_ciphers_bulk(
         .map(|cipher| cipher.into())
         .collect();
 
-    attachments::hydrate_ciphers_attachments(
-        &db,
-        env.as_ref(),
-        &base_url,
-        &mut restored_ciphers,
-        &claims.sub,
-    )
-    .await?;
+    attachments::hydrate_ciphers_attachments(&db, env.as_ref(), &mut restored_ciphers).await?;
 
     db::touch_user_updated_at(&db, &claims.sub).await?;
 
@@ -607,7 +586,6 @@ pub async fn restore_ciphers_bulk(
 pub async fn create_cipher_simple(
     claims: Claims,
     State(env): State<Arc<Env>>,
-    Extension(BaseUrl(base_url)): Extension<BaseUrl>,
     Json(payload): Json<CipherRequestData>,
 ) -> Result<Json<Cipher>, AppError> {
     let db = db::get_db(&env)?;
@@ -660,7 +638,7 @@ pub async fn create_cipher_simple(
     .run()
     .await?;
 
-    attachments::hydrate_cipher_attachments(&db, env.as_ref(), &base_url, &mut cipher, &claims.sub)
+    attachments::hydrate_cipher_attachments(&db, env.as_ref(), &mut cipher)
         .await?;
     db::touch_user_updated_at(&db, &claims.sub).await?;
 

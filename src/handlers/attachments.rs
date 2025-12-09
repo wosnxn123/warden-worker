@@ -1,15 +1,17 @@
 use std::{collections::HashMap, sync::Arc};
 
-use axum::{body::Bytes, extract::{Multipart, Path, State}, Extension, Json};
+use axum::{
+    body::Bytes,
+    extract::{Multipart, Path, State},
+    Extension, Json,
+};
 use chrono::Utc;
 use jsonwebtoken::{encode, EncodingKey, Header};
 use log;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
-use worker::{
-    query, wasm_bindgen::JsValue, Bucket, D1Database, Env, HttpMetadata,
-};
+use worker::{query, wasm_bindgen::JsValue, Bucket, D1Database, Env, HttpMetadata};
 
 use crate::{
     auth::Claims,
@@ -161,7 +163,7 @@ pub async fn create_attachment_v2(
     // Return upload URL pointing to local upload endpoint
     let url = upload_url(&env, &base_url, &cipher_id, &attachment_id, &claims.sub)?;
     let mut cipher_response: Cipher = cipher.into();
-    hydrate_cipher_attachments(&db, &env, &base_url, &mut cipher_response, &claims.sub).await?;
+    hydrate_cipher_attachments(&db, &env, &mut cipher_response).await?;
 
     touch_cipher_updated_at(&db, &cipher_id).await?;
     db::touch_user_updated_at(&db, &claims.sub).await?;
@@ -256,7 +258,6 @@ pub async fn upload_attachment_v2_data(
 pub async fn upload_attachment_legacy(
     claims: Claims,
     State(env): State<Arc<Env>>,
-    Extension(BaseUrl(base_url)): Extension<BaseUrl>,
     Path(cipher_id): Path<String>,
     mut multipart: Multipart,
 ) -> Result<Json<Cipher>, AppError> {
@@ -313,7 +314,7 @@ pub async fn upload_attachment_legacy(
 
     // 返回最新的 Cipher（含附件）
     let mut cipher_response: Cipher = cipher.into();
-    hydrate_cipher_attachments(&db, &env, &base_url, &mut cipher_response, &claims.sub).await?;
+    hydrate_cipher_attachments(&db, &env, &mut cipher_response).await?;
 
     Ok(Json(cipher_response))
 }
@@ -339,7 +340,7 @@ pub async fn get_attachment(
     }
 
     let url = download_url(&env, &base_url, &cipher_id, &attachment_id, &claims.sub)?;
-    Ok(Json(attachment.to_response(url)))
+    Ok(Json(attachment.to_response(Some(url))))
 }
 
 /// DELETE /api/ciphers/{cipher_id}/attachment/{attachment_id}
@@ -347,7 +348,6 @@ pub async fn get_attachment(
 pub async fn delete_attachment(
     claims: Claims,
     State(env): State<Arc<Env>>,
-    Extension(BaseUrl(base_url)): Extension<BaseUrl>,
     Path((cipher_id, attachment_id)): Path<(String, String)>,
 ) -> Result<Json<AttachmentDeleteResponse>, AppError> {
     let bucket = require_bucket(&env)?;
@@ -377,7 +377,7 @@ pub async fn delete_attachment(
     let mut cipher_response: Cipher = ensure_cipher_for_user(&db, &cipher_id, &claims.sub)
         .await?
         .into();
-    hydrate_cipher_attachments(&db, &env, &base_url, &mut cipher_response, &claims.sub).await?;
+    hydrate_cipher_attachments(&db, &env, &mut cipher_response).await?;
 
     Ok(Json(AttachmentDeleteResponse {
         cipher: cipher_response,
@@ -390,33 +390,23 @@ pub async fn delete_attachment(
 pub async fn delete_attachment_post(
     claims: Claims,
     State(env): State<Arc<Env>>,
-    Extension(BaseUrl(base_url)): Extension<BaseUrl>,
     Path((cipher_id, attachment_id)): Path<(String, String)>,
 ) -> Result<Json<AttachmentDeleteResponse>, AppError> {
-    delete_attachment(
-        claims,
-        State(env),
-        Extension(BaseUrl(base_url)),
-        Path((cipher_id, attachment_id)),
-    )
-    .await
+    delete_attachment(claims, State(env), Path((cipher_id, attachment_id))).await
 }
-
 
 /// Attach attachment information to Cipher (used by other handlers)
 pub async fn hydrate_cipher_attachments(
     db: &D1Database,
     env: &Env,
-    base_url: &str,
     cipher: &mut Cipher,
-    user_id: &str,
 ) -> Result<(), AppError> {
     if !attachments_enabled(env) {
         cipher.attachments = None;
         return Ok(());
     }
 
-    let mut map = load_attachment_map(db, env, base_url, &[cipher.id.clone()], user_id).await?;
+    let mut map = load_attachment_map(db, &[cipher.id.clone()]).await?;
     if let Some(list) = map.remove(&cipher.id) {
         if !list.is_empty() {
             cipher.attachments = Some(list);
@@ -429,9 +419,7 @@ pub async fn hydrate_cipher_attachments(
 pub async fn hydrate_ciphers_attachments(
     db: &D1Database,
     env: &Env,
-    base_url: &str,
     ciphers: &mut [Cipher],
-    user_id: &str,
 ) -> Result<(), AppError> {
     if !attachments_enabled(env) {
         for cipher in ciphers.iter_mut() {
@@ -441,7 +429,7 @@ pub async fn hydrate_ciphers_attachments(
     }
 
     let ids: Vec<String> = ciphers.iter().map(|c| c.id.clone()).collect();
-    let mut map = load_attachment_map(db, env, base_url, &ids, user_id).await?;
+    let mut map = load_attachment_map(db, &ids).await?;
 
     for cipher in ciphers.iter_mut() {
         if let Some(list) = map.remove(&cipher.id) {
@@ -612,10 +600,7 @@ async fn fetch_attachment(db: &D1Database, attachment_id: &str) -> Result<Attach
 
 async fn load_attachment_map(
     db: &D1Database,
-    env: &Env,
-    base_url: &str,
-    cipher_ids: &[String],
-    user_id: &str,
+    cipher_ids: &[String]
 ) -> Result<HashMap<String, Vec<AttachmentResponse>>, AppError> {
     if cipher_ids.is_empty() {
         return Ok(HashMap::new());
@@ -635,16 +620,10 @@ async fn load_attachment_map(
     let mut map: HashMap<String, Vec<AttachmentResponse>> = HashMap::new();
 
     for attachment in attachments {
-        let url = download_url(
-            env,
-            base_url,
-            &attachment.cipher_id,
-            &attachment.id,
-            user_id,
-        )?;
         map.entry(attachment.cipher_id.clone())
             .or_default()
-            .push(attachment.to_response(url));
+            // URLs are minted on-demand via the download endpoint; skip pre-signing here.
+            .push(attachment.to_response(None));
     }
 
     Ok(map)

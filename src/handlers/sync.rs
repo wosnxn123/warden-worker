@@ -1,4 +1,4 @@
-use axum::{extract::State, Extension, Json};
+use axum::{extract::State, Json};
 use serde_json::Value;
 use std::sync::Arc;
 use worker::Env;
@@ -14,14 +14,12 @@ use crate::{
         sync::{Profile, SyncResponse},
         user::User,
     },
-    BaseUrl,
 };
 
 #[worker::send]
 pub async fn get_sync_data(
     claims: Claims,
     State(env): State<Arc<Env>>,
-    Extension(BaseUrl(base_url)): Extension<BaseUrl>,
 ) -> Result<Json<SyncResponse>, AppError> {
     let user_id = claims.sub;
     let db = db::get_db(&env)?;
@@ -67,7 +65,7 @@ pub async fn get_sync_data(
         .collect::<Vec<Cipher>>();
 
     let mut ciphers = ciphers;
-    attachments::hydrate_ciphers_attachments(&db, env.as_ref(), &base_url, &mut ciphers, &user_id)
+    attachments::hydrate_ciphers_attachments(&db, env.as_ref(), &mut ciphers)
         .await?;
 
     let profile = Profile::from_user(user)?;
