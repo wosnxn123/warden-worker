@@ -367,23 +367,24 @@ pub async fn soft_delete_ciphers_bulk(
 ) -> Result<Json<()>, AppError> {
     let db = db::get_db(&env)?;
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
-    let batch_size = get_batch_size(&env);
-    let mut statements: Vec<D1PreparedStatement> = Vec::with_capacity(payload.ids.len());
+    let ids = payload.ids;
 
-    for id in payload.ids {
-        let stmt = query!(
-            &db,
-            "UPDATE ciphers SET deleted_at = ?1, updated_at = ?1 WHERE id = ?2 AND user_id = ?3",
-            now,
-            id,
-            claims.sub
-        )
-        .map_err(|_| AppError::Database)?;
-
-        statements.push(stmt);
+    if ids.is_empty() {
+        return Ok(Json(()));
     }
 
-    db::execute_in_batches(&db, statements, batch_size).await?;
+    let ids_json = serde_json::to_string(&ids).map_err(|_| AppError::Internal)?;
+
+    query!(
+        &db,
+        "UPDATE ciphers SET deleted_at = ?1, updated_at = ?1 WHERE user_id = ?2 AND id IN (SELECT value FROM json_each(?3))",
+        now,
+        claims.sub,
+        ids_json
+    )
+    .map_err(|_| AppError::Database)?
+    .run()
+    .await?;
 
     db::touch_user_updated_at(&db, &claims.sub).await?;
 
@@ -431,8 +432,13 @@ pub async fn hard_delete_ciphers_bulk(
     Json(payload): Json<CipherIdsData>,
 ) -> Result<Json<()>, AppError> {
     let db = db::get_db(&env)?;
-    let batch_size = get_batch_size(&env);
     let ids = payload.ids;
+
+    if ids.is_empty() {
+        return Ok(Json(()));
+    }
+
+    let ids_json = serde_json::to_string(&ids).map_err(|_| AppError::Internal)?;
 
     if attachments::attachments_enabled(env.as_ref()) {
         let bucket = attachments::require_bucket(env.as_ref())?;
@@ -441,21 +447,15 @@ pub async fn hard_delete_ciphers_bulk(
         attachments::delete_r2_objects(&bucket, &keys).await?;
     }
 
-    let mut statements: Vec<D1PreparedStatement> = Vec::with_capacity(ids.len());
-
-    for id in ids {
-        let stmt = query!(
-            &db,
-            "DELETE FROM ciphers WHERE id = ?1 AND user_id = ?2",
-            id,
-            claims.sub
-        )
-        .map_err(|_| AppError::Database)?;
-
-        statements.push(stmt);
-    }
-
-    db::execute_in_batches(&db, statements, batch_size).await?;
+    query!(
+        &db,
+        "DELETE FROM ciphers WHERE user_id = ?1 AND id IN (SELECT value FROM json_each(?2))",
+        claims.sub,
+        ids_json
+    )
+    .map_err(|_| AppError::Database)?
+    .run()
+    .await?;
 
     db::touch_user_updated_at(&db, &claims.sub).await?;
 
@@ -523,7 +523,6 @@ pub async fn restore_ciphers_bulk(
 ) -> Result<Json<BulkRestoreResponse>, AppError> {
     let db = db::get_db(&env)?;
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
-    let batch_size = get_batch_size(&env);
     let ids = payload.ids;
 
     if ids.is_empty() {
@@ -534,24 +533,20 @@ pub async fn restore_ciphers_bulk(
         }));
     }
 
-    // Batch UPDATE operations
-    let mut update_statements: Vec<D1PreparedStatement> = Vec::with_capacity(ids.len());
-    for id in ids.iter() {
-        let stmt = query!(
-            &db,
-            "UPDATE ciphers SET deleted_at = NULL, updated_at = ?1 WHERE id = ?2 AND user_id = ?3",
-            now,
-            id.clone(),
-            claims.sub
-        )
-        .map_err(|_| AppError::Database)?;
-
-        update_statements.push(stmt);
-    }
-    db::execute_in_batches(&db, update_statements, batch_size).await?;
-
-    // Batch SELECT using json_each() - avoid N+1 query problem
+    // Precompute JSON array for ids, used by both UPDATE and SELECT
     let ids_json = serde_json::to_string(&ids).map_err(|_| AppError::Internal)?;
+
+    // Single bulk UPDATE using json_each()
+    query!(
+        &db,
+        "UPDATE ciphers SET deleted_at = NULL, updated_at = ?1 WHERE user_id = ?2 AND id IN (SELECT value FROM json_each(?3))",
+        now,
+        claims.sub,
+        ids_json.clone()
+    )
+    .map_err(|_| AppError::Database)?
+    .run()
+    .await?;
 
     let mut restored_ciphers: Vec<Cipher> = db
         .prepare(
