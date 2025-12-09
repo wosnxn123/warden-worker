@@ -12,7 +12,7 @@ use crate::error::AppError;
 use crate::handlers::attachments;
 use crate::models::cipher::{
     Cipher, CipherDBModel, CipherData, CipherListResponse, CipherRequestData, CreateCipherRequest,
-    MoveCipherData, PartialCipherData,
+    PartialCipherData,
 };
 use crate::models::user::{PasswordOrOtpData, User};
 use crate::BaseUrl;
@@ -351,6 +351,7 @@ pub async fn soft_delete_cipher(
 
 /// Soft delete multiple ciphers (PUT /api/ciphers/delete)
 /// Accepts raw JSON body and uses json_each with path to extract ids directly.
+/// Expected JSON: {"ids": ["cipher_id1", "cipher_id2", ...]}
 #[worker::send]
 pub async fn soft_delete_ciphers_bulk(
     claims: Claims,
@@ -369,7 +370,8 @@ pub async fn soft_delete_ciphers_bulk(
     )
     .map_err(|_| AppError::Database)?
     .run()
-    .await?;
+    .await
+    .map_err(db::map_d1_json_error)?;
 
     db::touch_user_updated_at(&db, &claims.sub).await?;
 
@@ -416,6 +418,7 @@ pub async fn hard_delete_cipher(
 
 /// Hard delete multiple ciphers (DELETE /api/ciphers or POST /api/ciphers/delete)
 /// Accepts raw JSON body and uses json_each with path to extract ids directly.
+/// Expected JSON: {"ids": ["cipher_id1", "cipher_id2", ...]}
 #[worker::send]
 pub async fn hard_delete_ciphers_bulk(
     claims: Claims,
@@ -444,7 +447,8 @@ pub async fn hard_delete_ciphers_bulk(
     )
     .map_err(|_| AppError::Database)?
     .run()
-    .await?;
+    .await
+    .map_err(db::map_d1_json_error)?;
 
     db::touch_user_updated_at(&db, &claims.sub).await?;
 
@@ -505,6 +509,7 @@ pub struct BulkRestoreResponse {
 
 /// Restore multiple ciphers (PUT /api/ciphers/restore)
 /// Accepts raw JSON body and uses json_each with path to extract ids directly.
+/// Expected JSON: {"ids": ["cipher_id1", "cipher_id2", ...]}
 #[worker::send]
 pub async fn restore_ciphers_bulk(
     claims: Claims,
@@ -524,7 +529,8 @@ pub async fn restore_ciphers_bulk(
     )
     .map_err(|_| AppError::Database)?
     .run()
-    .await?;
+    .await
+    .map_err(db::map_d1_json_error)?;
 
     let mut restored_ciphers: Vec<Cipher> = db
         .prepare(
@@ -532,7 +538,8 @@ pub async fn restore_ciphers_bulk(
         )
         .bind(&[claims.sub.clone().into(), body.clone().into()])?
         .all()
-        .await?
+        .await
+        .map_err(db::map_d1_json_error)?
         .results::<crate::models::cipher::CipherDBModel>()?
         .into_iter()
         .map(|cipher| cipher.into())
@@ -622,57 +629,50 @@ pub async fn create_cipher_simple(
 }
 
 /// Move selected ciphers to a folder (POST/PUT /api/ciphers/move)
+/// Accepts raw JSON body and uses json_extract/json_each to extract values directly.
+/// Expected JSON: {"folderId": "optional-folder-id-or-null", "ids": ["cipher_id1", ...]}
+/// The folderId is optional and treated as null if not provided in vaultwarden.
+/// D1/SQLite's json_extract returns SQL NULL for non-existent paths, which is identical to the behavior in vaultwarden.
 #[worker::send]
 pub async fn move_cipher_selected(
     claims: Claims,
     State(env): State<Arc<Env>>,
-    Json(payload): Json<MoveCipherData>,
+    body: String,
 ) -> Result<Json<()>, AppError> {
     let db = db::get_db(&env)?;
     let user_id = &claims.sub;
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
 
     // Validate folder exists and belongs to user (if folder_id is provided)
-    if let Some(ref folder_id) = payload.folder_id {
-        let folder_exists: Option<serde_json::Value> = db
-            .prepare("SELECT id FROM folders WHERE id = ?1 AND user_id = ?2")
-            .bind(&[folder_id.clone().into(), user_id.clone().into()])?
-            .first(None)
-            .await?;
+    // Uses json_extract to get folderId from request body
+    let folder_invalid: Option<Value> = db
+        .prepare(
+            "SELECT 1 WHERE json_extract(?1, '$.folderId') IS NOT NULL 
+             AND NOT EXISTS (
+                 SELECT 1 FROM folders WHERE id = json_extract(?1, '$.folderId') AND user_id = ?2
+             )",
+        )
+        .bind(&[body.clone().into(), user_id.clone().into()])?
+        .first(None)
+        .await
+        .map_err(db::map_d1_json_error)?;
 
-        if folder_exists.is_none() {
-            return Err(AppError::BadRequest(
-                "Invalid folder: Folder does not exist or belongs to another user".to_string(),
-            ));
-        }
+    if folder_invalid.is_some() {
+        return Err(AppError::BadRequest(
+            "Invalid folder: Folder does not exist or belongs to another user".to_string(),
+        ));
     }
-
-    if payload.ids.is_empty() {
-        return Ok(Json(()));
-    }
-
-    // Use json_each() to update all matching ciphers in a single query
-    // This avoids N+1 query problem by updating all ciphers at once
-    let ids_json = serde_json::to_string(&payload.ids).map_err(|_| AppError::Internal)?;
 
     // Update folder_id for all ciphers that belong to the user and are in the ids list
-    // Using json_each() allows us to update all matching ciphers in a single query
+    // Uses json_extract for folderId and json_each for ids array
     db.prepare(
-        "UPDATE ciphers SET folder_id = ?1, updated_at = ?2 
-         WHERE user_id = ?3 AND id IN (SELECT value FROM json_each(?4))",
+        "UPDATE ciphers SET folder_id = json_extract(?1, '$.folderId'), updated_at = ?2 
+         WHERE user_id = ?3 AND id IN (SELECT value FROM json_each(?1, '$.ids'))",
     )
-    .bind(&[
-        payload
-            .folder_id
-            .clone()
-            .map(|s| s.into())
-            .unwrap_or(worker::wasm_bindgen::JsValue::NULL),
-        now.into(),
-        user_id.clone().into(),
-        ids_json.into(),
-    ])?
+    .bind(&[body.into(), now.into(), user_id.clone().into()])?
     .run()
-    .await?;
+    .await
+    .map_err(db::map_d1_json_error)?;
 
     // Update user's revision date
     db::touch_user_updated_at(&db, user_id).await?;

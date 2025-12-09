@@ -510,7 +510,7 @@ pub(crate) async fn list_attachment_keys_for_cipher_ids_json(
         .bind(&params)?
         .all()
         .await
-        .map_err(|_| AppError::Database)?
+        .map_err(db::map_d1_json_error)?
         .results()
         .map_err(|_| AppError::Database)?;
 
@@ -623,7 +623,7 @@ async fn load_attachment_map_json(
         .bind(&[json_body.to_owned().into(), ids_path.to_owned().into()])?
         .all()
         .await
-        .map_err(|_| AppError::Database)?
+        .map_err(db::map_d1_json_error)?
         .results()
         .map_err(|_| AppError::Database)?;
 

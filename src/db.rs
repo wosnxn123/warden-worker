@@ -1,10 +1,20 @@
 use crate::error::AppError;
 use chrono::Utc;
 use std::sync::Arc;
-use worker::{query, D1Database, D1PreparedStatement, Env};
+use worker::{query, D1Database, D1PreparedStatement, Env, Error};
 
 pub fn get_db(env: &Arc<Env>) -> Result<D1Database, AppError> {
     env.d1("vault1").map_err(AppError::Worker)
+}
+
+/// Map D1 JSON parsing errors to 400 while leaving other errors untouched.
+pub fn map_d1_json_error(err: Error) -> AppError {
+    let msg = err.to_string();
+    if msg.to_ascii_lowercase().contains("malformed json") {
+        AppError::BadRequest("Malformed JSON in request body".to_string())
+    } else {
+        AppError::Worker(err)
+    }
 }
 
 /// Update the user's `updated_at` field to the current timestamp.
