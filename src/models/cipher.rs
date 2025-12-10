@@ -323,10 +323,12 @@ pub struct CreateCipherRequest {
 }
 
 /// Response for listing ciphers (GET /api/ciphers)
+/// Now we don't use this struct, we use RawJson instead. But we keep it here for reference.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
 pub struct CipherListResponse {
-    pub data: Vec<Cipher>,
+    pub data: Vec<Value>,
     pub object: String,
     pub continuation_token: Option<String>,
 }

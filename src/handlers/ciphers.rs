@@ -1,22 +1,34 @@
+use axum::extract::Path;
+use axum::http::header;
+use axum::response::{IntoResponse, Response};
 use axum::{extract::State, Extension, Json};
 use chrono::{DateTime, Utc};
 use log; // Used for warning logs on parse failures
+use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
 use uuid::Uuid;
-use worker::{query, Env};
+use worker::{query, wasm_bindgen::JsValue, Env};
 
 use crate::auth::Claims;
 use crate::db;
 use crate::error::AppError;
 use crate::handlers::attachments;
 use crate::models::cipher::{
-    Cipher, CipherDBModel, CipherData, CipherListResponse, CipherRequestData, CreateCipherRequest,
-    PartialCipherData,
+    Cipher, CipherDBModel, CipherData, CipherRequestData, CreateCipherRequest, PartialCipherData,
 };
 use crate::models::user::{PasswordOrOtpData, User};
 use crate::BaseUrl;
-use axum::extract::Path;
+
+/// A wrapper for raw JSON strings that implements IntoResponse.
+/// Use this to return pre-built JSON without re-parsing/re-serializing.
+pub struct RawJson(pub String);
+
+impl IntoResponse for RawJson {
+    fn into_response(self) -> Response {
+        ([(header::CONTENT_TYPE, "application/json")], self.0).into_response()
+    }
+}
 
 /// Helper to fetch a cipher by id for a user or return NotFound.
 async fn fetch_cipher_for_user(
@@ -217,35 +229,25 @@ pub async fn update_cipher(
 pub async fn list_ciphers(
     claims: Claims,
     State(env): State<Arc<Env>>,
-) -> Result<Json<CipherListResponse>, AppError> {
+) -> Result<RawJson, AppError> {
     let db = db::get_db(&env)?;
-
-    let ciphers_db: Vec<CipherDBModel> = db
-        .prepare(
-            "SELECT * FROM ciphers 
-             WHERE user_id = ?1 AND deleted_at IS NULL 
-             ORDER BY updated_at DESC",
-        )
-        .bind(&[claims.sub.clone().into()])?
-        .all()
-        .await?
-        .results()?;
-
-    let mut ciphers: Vec<Cipher> = ciphers_db.into_iter().map(|c| c.into()).collect();
-
-    attachments::hydrate_ciphers_attachments_for_user(
+    let include_attachments = attachments::attachments_enabled(env.as_ref());
+    let ciphers_json = fetch_cipher_json_array_raw(
         &db,
-        env.as_ref(),
-        &mut ciphers,
-        &claims.sub,
+        include_attachments,
+        "WHERE c.user_id = ?1 AND c.deleted_at IS NULL",
+        &[claims.sub.clone().into()],
+        "ORDER BY c.updated_at DESC",
     )
     .await?;
 
-    Ok(Json(CipherListResponse {
-        data: ciphers,
-        object: "list".to_string(),
-        continuation_token: None,
-    }))
+    // Build response JSON via string concatenation (no parsing!)
+    let response = format!(
+        r#"{{"data":{},"object":"list","continuationToken":null}}"#,
+        ciphers_json
+    );
+
+    Ok(RawJson(response))
 }
 
 /// GET /api/ciphers/{id}
@@ -504,15 +506,6 @@ pub async fn restore_cipher(
     Ok(Json(cipher))
 }
 
-/// Response for bulk restore operation
-#[derive(Debug, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BulkRestoreResponse {
-    pub data: Vec<Cipher>,
-    pub object: String,
-    pub continuation_token: Option<String>,
-}
-
 /// Restore multiple ciphers (PUT /api/ciphers/restore)
 /// Accepts raw JSON body and uses json_each with path to extract ids directly.
 /// Expected JSON: {"ids": ["cipher_id1", "cipher_id2", ...]}
@@ -521,7 +514,7 @@ pub async fn restore_ciphers_bulk(
     claims: Claims,
     State(env): State<Arc<Env>>,
     body: String,
-) -> Result<Json<BulkRestoreResponse>, AppError> {
+) -> Result<RawJson, AppError> {
     let db = db::get_db(&env)?;
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
 
@@ -538,35 +531,25 @@ pub async fn restore_ciphers_bulk(
     .await
     .map_err(db::map_d1_json_error)?;
 
-    let mut restored_ciphers: Vec<Cipher> = db
-        .prepare(
-            "SELECT * FROM ciphers WHERE user_id = ?1 AND id IN (SELECT value FROM json_each(?2, '$.ids'))",
-        )
-        .bind(&[claims.sub.clone().into(), body.clone().into()])?
-        .all()
-        .await
-        .map_err(db::map_d1_json_error)?
-        .results::<crate::models::cipher::CipherDBModel>()?
-        .into_iter()
-        .map(|cipher| cipher.into())
-        .collect();
-
-    attachments::hydrate_ciphers_attachments(
+    let include_attachments = attachments::attachments_enabled(env.as_ref());
+    let ciphers_json = fetch_cipher_json_array_raw(
         &db,
-        env.as_ref(),
-        &mut restored_ciphers,
-        Some(&body),
-        Some("$.ids"),
+        include_attachments,
+        "WHERE c.user_id = ?1 AND c.id IN (SELECT value FROM json_each(?2, '$.ids'))",
+        &[claims.sub.clone().into(), body.clone().into()],
+        "",
     )
     .await?;
 
     db::touch_user_updated_at(&db, &claims.sub).await?;
 
-    Ok(Json(BulkRestoreResponse {
-        data: restored_ciphers,
-        object: "list".to_string(),
-        continuation_token: None,
-    }))
+    // Build response JSON via string concatenation (no parsing!)
+    let response = format!(
+        r#"{{"data":{},"object":"list","continuationToken":null}}"#,
+        ciphers_json
+    );
+
+    Ok(RawJson(response))
 }
 
 /// Handler for POST /api/ciphers
@@ -744,4 +727,116 @@ pub async fn purge_vault(
     db::touch_user_updated_at(&db, user_id).await?;
 
     Ok(Json(()))
+}
+
+#[derive(Deserialize)]
+struct CipherJsonArrayRow {
+    ciphers_json: String,
+}
+
+/// Build the SQL expression for a single cipher as JSON.
+fn cipher_json_expr(attachments_enabled: bool) -> String {
+    let attachments_expr = if attachments_enabled {
+        "
+            (
+                SELECT CASE WHEN COUNT(1)=0 THEN NULL ELSE json_group_array(
+                    json_object(
+                        'id', a.id,
+                        'url', NULL,
+                        'fileName', a.file_name,
+                        'size', CAST(a.file_size AS TEXT),
+                        'sizeName',
+                            CASE
+                                WHEN a.file_size < 1024 THEN printf('%d B', a.file_size)
+                                WHEN a.file_size < 1048576 THEN printf('%.1f KB', a.file_size / 1024.0)
+                                WHEN a.file_size < 1073741824 THEN printf('%.1f MB', a.file_size / 1048576.0)
+                                WHEN a.file_size < 1099511627776 THEN printf('%.1f GB', a.file_size / 1073741824.0)
+                                ELSE printf('%.1f TB', a.file_size / 1099511627776.0)
+                            END,
+                        'key', a.akey,
+                        'object', 'attachment'
+                    )
+                ) END
+                FROM attachments a
+                WHERE a.cipher_id = c.id
+            )
+        "
+    } else {
+        "NULL"
+    };
+
+    format!(
+        "json_object(
+            'object', 'cipherDetails',
+            'id', c.id,
+            'userId', c.user_id,
+            'organizationId', c.organization_id,
+            'folderId', c.folder_id,
+            'type', c.type,
+            'favorite', CASE WHEN c.favorite THEN json('true') ELSE json('false') END,
+            'edit', json('true'),
+            'viewPassword', json('true'),
+            'permissions', json_object('delete', json('true'), 'restore', json('true')),
+            'organizationUseTotp', json('false'),
+            'collectionIds', NULL,
+            'revisionDate', c.updated_at,
+            'creationDate', c.created_at,
+            'deletedDate', c.deleted_at,
+            'attachments', {attachments_expr},
+            'name', json_extract(c.data, '$.name'),
+            'notes', json_extract(c.data, '$.notes'),
+            'fields', json_extract(c.data, '$.fields'),
+            'passwordHistory', json_extract(c.data, '$.passwordHistory'),
+            'reprompt', COALESCE(json_extract(c.data, '$.reprompt'), 0),
+            'login', CASE WHEN c.type = 1 THEN json_extract(c.data, '$.login') ELSE NULL END,
+            'secureNote', CASE WHEN c.type = 2 THEN json_extract(c.data, '$.secureNote') ELSE NULL END,
+            'card', CASE WHEN c.type = 3 THEN json_extract(c.data, '$.card') ELSE NULL END,
+            'identity', CASE WHEN c.type = 4 THEN json_extract(c.data, '$.identity') ELSE NULL END,
+            'sshKey', CASE WHEN c.type = 5 THEN json_extract(c.data, '$.sshKey') ELSE NULL END
+        )",
+        attachments_expr = attachments_expr,
+    )
+}
+
+/// Build SQL that returns ciphers as a JSON array string (using json_group_array).
+fn cipher_json_array_sql(
+    attachments_enabled: bool,
+    where_clause: &str,
+    order_clause: &str,
+) -> String {
+    let cipher_expr = cipher_json_expr(attachments_enabled);
+    // Use a subquery to ensure ORDER BY is applied before json_group_array
+    format!(
+        "SELECT COALESCE(json_group_array(json(sub.cipher_json)), '[]') AS ciphers_json
+        FROM (
+            SELECT {cipher_expr} AS cipher_json
+            FROM ciphers c
+            {where_clause}
+            {order_clause}
+        ) sub",
+        cipher_expr = cipher_expr,
+        where_clause = where_clause,
+        order_clause = order_clause,
+    )
+}
+
+/// Execute a cipher JSON projection query and return the raw JSON array string.
+/// This avoids JSON parsing in Rust, significantly reducing CPU time.
+pub(crate) async fn fetch_cipher_json_array_raw(
+    db: &worker::D1Database,
+    attachments_enabled: bool,
+    where_clause: &str,
+    params: &[JsValue],
+    order_clause: &str,
+) -> Result<String, AppError> {
+    let sql = cipher_json_array_sql(attachments_enabled, where_clause, order_clause);
+
+    let row: Option<CipherJsonArrayRow> = db
+        .prepare(&sql)
+        .bind(params)?
+        .first(None)
+        .await
+        .map_err(db::map_d1_json_error)?;
+
+    Ok(row.map(|r| r.ciphers_json).unwrap_or_else(|| "[]".to_string()))
 }

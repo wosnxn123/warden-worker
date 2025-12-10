@@ -416,63 +416,6 @@ pub async fn hydrate_cipher_attachments(
     Ok(())
 }
 
-/// Batch attach attachments to multiple Ciphers.
-/// - If `json_body` and `ids_path` are provided, use them directly (e.g. body + "$.ids").
-/// - Otherwise extract ids from ciphers and use "$" as path.
-pub async fn hydrate_ciphers_attachments(
-    db: &D1Database,
-    env: &Env,
-    ciphers: &mut [Cipher],
-    json_body: Option<&str>,
-    ids_path: Option<&str>,
-) -> Result<(), AppError> {
-    if !attachments_enabled(env) {
-        for cipher in ciphers.iter_mut() {
-            cipher.attachments = None;
-        }
-        return Ok(());
-    }
-
-    let owned_json: String;
-    let (body, path) = match (json_body, ids_path) {
-        (Some(b), Some(p)) => (b, p),
-        _ => {
-            let ids: Vec<&str> = ciphers.iter().map(|c| c.id.as_str()).collect();
-            owned_json = serde_json::to_string(&ids).map_err(|_| AppError::Internal)?;
-            (owned_json.as_str(), "$")
-        }
-    };
-
-    let map = load_attachment_map_json(db, body, path).await?;
-    apply_attachment_map(ciphers, map);
-
-    Ok(())
-}
-
-/// Batch hydrate attachments for all ciphers belonging to a user without serializing ids.
-pub async fn hydrate_ciphers_attachments_for_user(
-    db: &D1Database,
-    env: &Env,
-    ciphers: &mut [Cipher],
-    user_id: &str,
-) -> Result<(), AppError> {
-    if ciphers.is_empty() {
-        return Ok(());
-    }
-
-    if !attachments_enabled(env) {
-        for cipher in ciphers.iter_mut() {
-            cipher.attachments = None;
-        }
-        return Ok(());
-    }
-
-    let map = load_attachment_map_for_user(db, user_id).await?;
-    apply_attachment_map(ciphers, map);
-
-    Ok(())
-}
-
 pub(crate) fn attachments_enabled(env: &Env) -> bool {
     env.bucket(ATTACHMENTS_BUCKET).is_ok()
 }
@@ -647,26 +590,6 @@ async fn load_attachment_map_json(
     Ok(build_attachment_map(attachments))
 }
 
-async fn load_attachment_map_for_user(
-    db: &D1Database,
-    user_id: &str,
-) -> Result<HashMap<String, Vec<AttachmentResponse>>, AppError> {
-    let attachments: Vec<AttachmentDB> = db
-        .prepare(
-            "SELECT a.* FROM attachments a \
-             JOIN ciphers c ON a.cipher_id = c.id \
-             WHERE c.user_id = ?1",
-        )
-        .bind(&[user_id.into()])?
-        .all()
-        .await
-        .map_err(|_| AppError::Database)?
-        .results()
-        .map_err(|_| AppError::Database)?;
-
-    Ok(build_attachment_map(attachments))
-}
-
 fn build_attachment_map(
     attachments: Vec<AttachmentDB>,
 ) -> HashMap<String, Vec<AttachmentResponse>> {
@@ -680,16 +603,6 @@ fn build_attachment_map(
     }
 
     map
-}
-
-fn apply_attachment_map(ciphers: &mut [Cipher], mut map: HashMap<String, Vec<AttachmentResponse>>) {
-    for cipher in ciphers.iter_mut() {
-        if let Some(list) = map.remove(&cipher.id) {
-            if !list.is_empty() {
-                cipher.attachments = Some(list);
-            }
-        }
-    }
 }
 
 async fn upload_to_r2(

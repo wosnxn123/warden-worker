@@ -1,5 +1,4 @@
-use axum::{extract::State, Json};
-use serde_json::Value;
+use axum::extract::State;
 use std::sync::Arc;
 use worker::Env;
 
@@ -7,20 +6,21 @@ use crate::{
     auth::Claims,
     db,
     error::AppError,
-    handlers::attachments,
+    handlers::{attachments, ciphers},
     models::{
-        cipher::{Cipher, CipherDBModel},
         folder::{Folder, FolderResponse},
-        sync::{Profile, SyncResponse},
+        sync::Profile,
         user::User,
     },
 };
+
+use ciphers::RawJson;
 
 #[worker::send]
 pub async fn get_sync_data(
     claims: Claims,
     State(env): State<Arc<Env>>,
-) -> Result<Json<SyncResponse>, AppError> {
+) -> Result<RawJson, AppError> {
     let user_id = claims.sub;
     let db = db::get_db(&env)?;
 
@@ -42,44 +42,27 @@ pub async fn get_sync_data(
 
     let folders: Vec<FolderResponse> = folders_db.into_iter().map(|f| f.into()).collect();
 
-    // Fetch ciphers
-    let ciphers: Vec<Value> = db
-        .prepare("SELECT * FROM ciphers WHERE user_id = ?1")
-        .bind(&[user_id.clone().into()])?
-        .all()
-        .await?
-        .results()?;
+    // Fetch ciphers as raw JSON array string (no parsing in Rust!)
+    let include_attachments = attachments::attachments_enabled(env.as_ref());
+    let ciphers_json = ciphers::fetch_cipher_json_array_raw(
+        &db,
+        include_attachments,
+        "WHERE c.user_id = ?1",
+        &[user_id.clone().into()],
+        "",
+    )
+    .await?;
 
-    let ciphers = ciphers
-        .into_iter()
-        .filter_map(
-            |cipher| match serde_json::from_value::<CipherDBModel>(cipher.clone()) {
-                Ok(cipher) => Some(cipher),
-                Err(err) => {
-                    log::warn!("Cannot parse {err:?} {cipher:?}");
-                    None
-                }
-            },
-        )
-        .map(|cipher| cipher.into())
-        .collect::<Vec<Cipher>>();
-
-    let mut ciphers = ciphers;
-    attachments::hydrate_ciphers_attachments_for_user(&db, env.as_ref(), &mut ciphers, &user_id)
-        .await?;
-
+    // Serialize profile and folders (small data, acceptable CPU cost)
     let profile = Profile::from_user(user)?;
+    let profile_json = serde_json::to_string(&profile).map_err(|_| AppError::Internal)?;
+    let folders_json = serde_json::to_string(&folders).map_err(|_| AppError::Internal)?;
 
-    let response = SyncResponse {
-        profile,
-        folders,
-        collections: Vec::new(),
-        policies: Vec::new(),
-        ciphers,
-        domains: serde_json::Value::Null, // Ignored for basic implementation
-        sends: Vec::new(),
-        object: "sync".to_string(),
-    };
+    // Build response JSON via string concatenation (ciphers already raw JSON)
+    let response = format!(
+        r#"{{"profile":{},"folders":{},"collections":[],"policies":[],"ciphers":{},"domains":null,"sends":[],"object":"sync"}}"#,
+        profile_json, folders_json, ciphers_json
+    );
 
-    Ok(Json(response))
+    Ok(RawJson(response))
 }
