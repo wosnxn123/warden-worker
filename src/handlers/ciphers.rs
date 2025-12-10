@@ -233,7 +233,13 @@ pub async fn list_ciphers(
 
     let mut ciphers: Vec<Cipher> = ciphers_db.into_iter().map(|c| c.into()).collect();
 
-    attachments::hydrate_ciphers_attachments(&db, env.as_ref(), &mut ciphers, None, None).await?;
+    attachments::hydrate_ciphers_attachments_for_user(
+        &db,
+        env.as_ref(),
+        &mut ciphers,
+        &claims.sub,
+    )
+    .await?;
 
     Ok(Json(CipherListResponse {
         data: ciphers,

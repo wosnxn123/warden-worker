@@ -65,7 +65,8 @@ pub async fn get_sync_data(
         .collect::<Vec<Cipher>>();
 
     let mut ciphers = ciphers;
-    attachments::hydrate_ciphers_attachments(&db, env.as_ref(), &mut ciphers, None, None).await?;
+    attachments::hydrate_ciphers_attachments_for_user(&db, env.as_ref(), &mut ciphers, &user_id)
+        .await?;
 
     let profile = Profile::from_user(user)?;
 

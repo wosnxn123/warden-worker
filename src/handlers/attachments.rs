@@ -443,15 +443,32 @@ pub async fn hydrate_ciphers_attachments(
         }
     };
 
-    let mut map = load_attachment_map_json(db, body, path).await?;
+    let map = load_attachment_map_json(db, body, path).await?;
+    apply_attachment_map(ciphers, map);
 
-    for cipher in ciphers.iter_mut() {
-        if let Some(list) = map.remove(&cipher.id) {
-            if !list.is_empty() {
-                cipher.attachments = Some(list);
-            }
-        }
+    Ok(())
+}
+
+/// Batch hydrate attachments for all ciphers belonging to a user without serializing ids.
+pub async fn hydrate_ciphers_attachments_for_user(
+    db: &D1Database,
+    env: &Env,
+    ciphers: &mut [Cipher],
+    user_id: &str,
+) -> Result<(), AppError> {
+    if ciphers.is_empty() {
+        return Ok(());
     }
+
+    if !attachments_enabled(env) {
+        for cipher in ciphers.iter_mut() {
+            cipher.attachments = None;
+        }
+        return Ok(());
+    }
+
+    let map = load_attachment_map_for_user(db, user_id).await?;
+    apply_attachment_map(ciphers, map);
 
     Ok(())
 }
@@ -627,6 +644,32 @@ async fn load_attachment_map_json(
         .results()
         .map_err(|_| AppError::Database)?;
 
+    Ok(build_attachment_map(attachments))
+}
+
+async fn load_attachment_map_for_user(
+    db: &D1Database,
+    user_id: &str,
+) -> Result<HashMap<String, Vec<AttachmentResponse>>, AppError> {
+    let attachments: Vec<AttachmentDB> = db
+        .prepare(
+            "SELECT a.* FROM attachments a \
+             JOIN ciphers c ON a.cipher_id = c.id \
+             WHERE c.user_id = ?1",
+        )
+        .bind(&[user_id.into()])?
+        .all()
+        .await
+        .map_err(|_| AppError::Database)?
+        .results()
+        .map_err(|_| AppError::Database)?;
+
+    Ok(build_attachment_map(attachments))
+}
+
+fn build_attachment_map(
+    attachments: Vec<AttachmentDB>,
+) -> HashMap<String, Vec<AttachmentResponse>> {
     let mut map: HashMap<String, Vec<AttachmentResponse>> = HashMap::new();
 
     for attachment in attachments {
@@ -636,7 +679,17 @@ async fn load_attachment_map_json(
             .push(attachment.to_response(None));
     }
 
-    Ok(map)
+    map
+}
+
+fn apply_attachment_map(ciphers: &mut [Cipher], mut map: HashMap<String, Vec<AttachmentResponse>>) {
+    for cipher in ciphers.iter_mut() {
+        if let Some(list) = map.remove(&cipher.id) {
+            if !list.is_empty() {
+                cipher.attachments = Some(list);
+            }
+        }
+    }
 }
 
 async fn upload_to_r2(
