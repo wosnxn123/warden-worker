@@ -838,5 +838,7 @@ pub(crate) async fn fetch_cipher_json_array_raw(
         .await
         .map_err(db::map_d1_json_error)?;
 
-    Ok(row.map(|r| r.ciphers_json).unwrap_or_else(|| "[]".to_string()))
+    Ok(row
+        .map(|r| r.ciphers_json)
+        .unwrap_or_else(|| "[]".to_string()))
 }

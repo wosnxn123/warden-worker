@@ -1,5 +1,7 @@
-use axum::{extract::State, Json};
+use axum::extract::{Path, State};
+use axum::Json;
 use chrono::Utc;
+use serde_json::{json, Value};
 use std::sync::Arc;
 use uuid::Uuid;
 use worker::{query, Env};
@@ -8,7 +10,56 @@ use crate::auth::Claims;
 use crate::db::{self, touch_user_updated_at};
 use crate::error::AppError;
 use crate::models::folder::{CreateFolderRequest, Folder, FolderResponse};
-use axum::extract::Path;
+
+#[worker::send]
+pub async fn list_folders(
+    claims: Claims,
+    State(env): State<Arc<Env>>,
+) -> Result<Json<Value>, AppError> {
+    let db = db::get_db(&env)?;
+
+    let folders_db: Vec<Folder> = db
+        .prepare("SELECT * FROM folders WHERE user_id = ?1")
+        .bind(&[claims.sub.clone().into()])?
+        .all()
+        .await?
+        .results()
+        .map_err(|_| AppError::Database)?;
+
+    let folders: Vec<FolderResponse> = folders_db.into_iter().map(|f| f.into()).collect();
+
+    Ok(Json(json!({
+        "data": folders,
+        "object": "list",
+        "continuationToken": null,
+    })))
+}
+
+#[worker::send]
+pub async fn get_folder(
+    claims: Claims,
+    State(env): State<Arc<Env>>,
+    Path(id): Path<String>,
+) -> Result<Json<FolderResponse>, AppError> {
+    let db = db::get_db(&env)?;
+
+    let folder: Folder = query!(
+        &db,
+        "SELECT * FROM folders WHERE id = ?1 AND user_id = ?2",
+        &id,
+        &claims.sub
+    )
+    .map_err(|_| AppError::Database)?
+    .first(None)
+    .await?
+    .ok_or_else(|| {
+        AppError::BadRequest(
+            "Invalid folder: Folder does not exist or belongs to another user".to_string(),
+        )
+    })?;
+
+    Ok(Json(folder.into()))
+}
 
 #[worker::send]
 pub async fn create_folder(

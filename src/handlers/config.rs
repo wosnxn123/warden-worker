@@ -40,8 +40,8 @@ pub async fn config(
         // We should make sure that we keep this updated when we support the new server features
         // Version history:
         // - Individual cipher key encryption: 2024.2.0
-        "version": "2024.7.0",
-        "gitHash": "25cf6119-dirty",
+        "version": "2025.6.0",
+        "gitHash": "5d84f176",
         "server": {
           "name": "Vaultwarden",
           "url": "https://github.com/dani-garcia/vaultwarden"

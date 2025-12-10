@@ -16,6 +16,7 @@ pub fn api_router(env: Env) -> Router {
     Router::new()
         // Identity/Auth routes
         .route("/identity/accounts/prelogin", post(accounts::prelogin))
+        .route("/identity/accounts/register", post(accounts::register))
         .route(
             "/identity/accounts/register/finish",
             post(accounts::register),
@@ -123,9 +124,12 @@ pub fn api_router(env: Env) -> Router {
         // Purge vault - delete all ciphers and folders (requires password verification)
         .route("/api/ciphers/purge", post(ciphers::purge_vault))
         // Folders CRUD
+        .route("/api/folders", get(folders::list_folders))
         .route("/api/folders", post(folders::create_folder))
+        .route("/api/folders/{id}", get(folders::get_folder))
         .route("/api/folders/{id}", put(folders::update_folder))
         .route("/api/folders/{id}", delete(folders::delete_folder))
+        .route("/api/folders/{id}/delete", post(folders::delete_folder))
         .route("/api/config", get(config::config))
         // Emergency access (stub - returns empty lists, feature not supported)
         .route(

@@ -89,6 +89,21 @@ where
     deserializer.deserialize_any(BoolOrIntVisitor)
 }
 
+// Custom deserialization function for cipher types
+fn deserialize_cipher_type<'de, D>(deserializer: D) -> Result<i32, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = i32::deserialize(deserializer)?;
+    match value {
+        1..=5 => Ok(value), // Valid cipher types: Login, SecureNote, Card, Identity, SshKey
+        _ => Err(de::Error::invalid_value(
+            de::Unexpected::Signed(value as i64),
+            &"a valid cipher type (1=Login, 2=SecureNote, 3=Card, 4=Identity, 5=SshKey)",
+        )),
+    }
+}
+
 // The struct that is stored in the database and used in handlers.
 // For serialization to JSON for the client, we implement a custom `Serialize`.
 #[derive(Debug, Deserialize, Clone)]
@@ -296,6 +311,7 @@ pub struct CipherRequestData {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub organization_id: Option<String>,
     #[serde(rename = "type")]
+    #[serde(deserialize_with = "deserialize_cipher_type")]
     pub r#type: i32,
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
