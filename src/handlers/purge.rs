@@ -11,6 +11,8 @@ use worker::{query, D1Database, Env};
 
 /// Default number of days to keep soft-deleted items before purging
 const DEFAULT_PURGE_DAYS: i64 = 30;
+/// Retain pending attachments for at most this many days before cleanup
+const PENDING_RETENTION_DAYS: i64 = 1;
 
 /// Get the purge threshold days from environment variable or use default
 fn get_purge_days(env: &Env) -> i64 {
@@ -18,6 +20,43 @@ fn get_purge_days(env: &Env) -> i64 {
         .ok()
         .and_then(|v| v.to_string().parse::<i64>().ok())
         .unwrap_or(DEFAULT_PURGE_DAYS)
+}
+
+/// Purge pending attachments older than the configured retention window.
+pub async fn purge_stale_pending_attachments(env: &Env) -> Result<u32, worker::Error> {
+    let db: D1Database = env.d1("vault1")?;
+    let now = Utc::now();
+    let pending_cutoff = now - Duration::days(PENDING_RETENTION_DAYS);
+    let pending_cutoff_str = pending_cutoff.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
+
+    let pending_count_result = query!(
+        &db,
+        "SELECT COUNT(*) as count FROM attachments_pending WHERE created_at < ?1",
+        pending_cutoff_str
+    )?
+    .first::<CountResult>(None)
+    .await?;
+
+    let pending_count = pending_count_result.map(|r| r.count).unwrap_or(0);
+
+    if pending_count > 0 {
+        query!(
+            &db,
+            "DELETE FROM attachments_pending WHERE created_at < ?1",
+            pending_cutoff_str
+        )?
+        .run()
+        .await?;
+        log::info!(
+            "Purged {} pending attachment(s) older than {} day(s)",
+            pending_count,
+            PENDING_RETENTION_DAYS
+        );
+    } else {
+        log::info!("No pending attachments to purge");
+    }
+
+    Ok(pending_count)
 }
 
 /// Purge soft-deleted ciphers that are older than the configured threshold.

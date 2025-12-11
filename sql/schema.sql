@@ -51,6 +51,21 @@ CREATE TABLE IF NOT EXISTS attachments (
 );
 CREATE INDEX IF NOT EXISTS idx_attachments_cipher ON attachments(cipher_id);
 
+-- Pending attachments table for in-flight uploads
+CREATE TABLE IF NOT EXISTS attachments_pending (
+    id TEXT PRIMARY KEY NOT NULL,
+    cipher_id TEXT NOT NULL,
+    file_name TEXT NOT NULL,
+    file_size INTEGER NOT NULL,
+    akey TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    organization_id TEXT,
+    FOREIGN KEY (cipher_id) REFERENCES ciphers(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_attachments_pending_cipher ON attachments_pending(cipher_id);
+CREATE INDEX IF NOT EXISTS idx_attachments_pending_created_at ON attachments_pending(created_at);
+
 -- TwoFactor table for two-factor authentication
 -- Types: 0=Authenticator(TOTP), 1=Email, 5=Remember, 8=RecoveryCode
 CREATE TABLE IF NOT EXISTS twofactor (

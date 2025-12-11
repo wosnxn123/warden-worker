@@ -66,6 +66,19 @@ pub async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) 
     console_error_panic_hook::set_once();
     let _ = console_log::init_with_level(log::Level::Debug);
 
+    log::info!("Scheduled task triggered: purging stale pending attachments");
+    match handlers::purge::purge_stale_pending_attachments(&env).await {
+        Ok(count) => {
+            log::info!(
+                "Pending attachment purge completed: {} record(s) removed",
+                count
+            );
+        }
+        Err(e) => {
+            log::error!("Pending attachment purge failed: {:?}", e);
+        }
+    }
+
     log::info!("Scheduled task triggered: purging soft-deleted ciphers");
 
     match handlers::purge::purge_deleted_ciphers(&env).await {

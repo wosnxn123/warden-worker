@@ -146,7 +146,7 @@ pub async fn create_attachment_v2(
 
     query!(
         &db,
-        "INSERT INTO attachments (id, cipher_id, file_name, file_size, akey, created_at, updated_at, organization_id)
+        "INSERT INTO attachments_pending (id, cipher_id, file_name, file_size, akey, created_at, updated_at, organization_id)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6, ?7)",
         attachment_id,
         cipher.id,
@@ -165,8 +165,26 @@ pub async fn create_attachment_v2(
     let mut cipher_response: Cipher = cipher.into();
     hydrate_cipher_attachments(&db, &env, &mut cipher_response).await?;
 
-    touch_cipher_updated_at(&db, &cipher_id).await?;
-    db::touch_user_updated_at(&db, &claims.sub).await?;
+    // add pending attachment to response
+    let pending_attachment = AttachmentDB {
+        id: attachment_id.clone(),
+        cipher_id: cipher_id.clone(),
+        file_name,
+        file_size: declared_size,
+        akey: Some(key),
+        created_at: now.clone(),
+        updated_at: now,
+        organization_id: cipher_response.organization_id.clone(),
+    };
+
+    let pending_response = pending_attachment.to_response(None);
+    match &mut cipher_response.attachments {
+        Some(list) => list.push(pending_response),
+        None => cipher_response.attachments = Some(vec![pending_response]),
+    }
+
+    // no need to touch cipher updated_at and user updated_at here
+    // it will be touched in after upload
 
     Ok(Json(AttachmentUploadResponse {
         object: "attachment-fileUpload".to_string(),
@@ -190,8 +208,8 @@ pub async fn upload_attachment_v2_data(
 
     let _cipher = ensure_cipher_for_user(&db, &cipher_id, &claims.sub).await?;
 
-    let mut attachment = fetch_attachment(&db, &attachment_id).await?;
-    if attachment.cipher_id != cipher_id {
+    let mut pending = fetch_pending_attachment(&db, &attachment_id).await?;
+    if pending.cipher_id != cipher_id {
         return Err(AppError::BadRequest(
             "Attachment does not belong to cipher".to_string(),
         ));
@@ -202,45 +220,63 @@ pub async fn upload_attachment_v2_data(
     let actual_size = file_bytes.len() as i64;
 
     // Validate actual size against declared value deviation
-    if let Err(e) = validate_size_within_declared(&attachment, actual_size) {
-        query!(&db, "DELETE FROM attachments WHERE id = ?1", attachment.id)
-            .map_err(|_| AppError::Database)?
-            .run()
-            .await?;
+    if let Err(e) = validate_size_within_declared(&pending, actual_size) {
+        query!(
+            &db,
+            "DELETE FROM attachments_pending WHERE id = ?1",
+            pending.id
+        )
+        .map_err(|_| AppError::Database)?
+        .run()
+        .await?;
         return Err(e);
     }
 
     // Validate capacity limits (replace with actual size)
-    enforce_limits(&db, &env, &claims.sub, actual_size, Some(&attachment.id)).await?;
+    enforce_limits(&db, &env, &claims.sub, actual_size, Some(&pending.id)).await?;
 
     // Need a key
-    if attachment.akey.is_none() && key_override.is_none() {
+    if pending.akey.is_none() && key_override.is_none() {
         return Err(AppError::BadRequest(
             "No attachment key provided".to_string(),
         ));
     }
     if let Some(k) = key_override {
-        attachment.akey = Some(k);
+        pending.akey = Some(k);
     }
 
     // Save to R2
     upload_to_r2(
         &bucket,
-        &attachment.r2_key(),
+        &pending.r2_key(),
         content_type,
         file_bytes.to_vec(),
     )
     .await?;
 
-    // Update metadata
+    // Finalize: move pending -> attachments and touch timestamps
     let now = now_string();
     query!(
         &db,
-        "UPDATE attachments SET file_size = ?1, akey = COALESCE(?2, akey), updated_at = ?3 WHERE id = ?4",
+        "INSERT INTO attachments (id, cipher_id, file_name, file_size, akey, created_at, updated_at, organization_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        pending.id,
+        pending.cipher_id,
+        pending.file_name,
         actual_size,
-        attachment.akey,
+        pending.akey,
+        pending.created_at,
         now,
-        attachment.id,
+        pending.organization_id,
+    )
+    .map_err(|_| AppError::Database)?
+    .run()
+    .await?;
+
+    query!(
+        &db,
+        "DELETE FROM attachments_pending WHERE id = ?1",
+        pending.id
     )
     .map_err(|_| AppError::Database)?
     .run()
@@ -312,7 +348,7 @@ pub async fn upload_attachment_legacy(
     touch_cipher_updated_at(&db, &cipher_id).await?;
     db::touch_user_updated_at(&db, &claims.sub).await?;
 
-    // 返回最新的 Cipher（含附件）
+    // reload cipher to return fresh updated_at and attachments state
     let mut cipher_response: Cipher = cipher.into();
     hydrate_cipher_attachments(&db, &env, &mut cipher_response).await?;
 
@@ -564,6 +600,18 @@ async fn ensure_cipher_for_user(
 
 async fn fetch_attachment(db: &D1Database, attachment_id: &str) -> Result<AttachmentDB, AppError> {
     db.prepare("SELECT * FROM attachments WHERE id = ?1")
+        .bind(&[attachment_id.into()])?
+        .first(None)
+        .await
+        .map_err(|_| AppError::Database)?
+        .ok_or_else(|| AppError::NotFound("Attachment not found".to_string()))
+}
+
+async fn fetch_pending_attachment(
+    db: &D1Database,
+    attachment_id: &str,
+) -> Result<AttachmentDB, AppError> {
+    db.prepare("SELECT * FROM attachments_pending WHERE id = ?1")
         .bind(&[attachment_id.into()])?
         .first(None)
         .await
@@ -842,22 +890,39 @@ async fn user_attachment_usage(
     user_id: &str,
     exclude_attachment: Option<&str>,
 ) -> Result<i64, AppError> {
-    let query_str = if exclude_attachment.is_some() {
-        "SELECT COALESCE(SUM(a.file_size), 0) as total
-         FROM attachments a
-         JOIN ciphers c ON c.id = a.cipher_id
-         WHERE c.user_id = ?1 AND a.id != ?2"
+    let (query_str, bindings): (String, Vec<JsValue>) = if let Some(id) = exclude_attachment {
+        (
+            "SELECT COALESCE(SUM(file_size), 0) as total FROM (
+                SELECT a.file_size AS file_size
+                FROM attachments a
+                JOIN ciphers c ON c.id = a.cipher_id
+                WHERE c.user_id = ?1 AND a.id != ?2
+                UNION ALL
+                SELECT p.file_size AS file_size
+                FROM attachments_pending p
+                JOIN ciphers c2 ON c2.id = p.cipher_id
+                WHERE c2.user_id = ?1 AND p.id != ?2
+            ) AS files"
+                .to_string(),
+            vec![JsValue::from_str(user_id), JsValue::from_str(id)],
+        )
     } else {
-        "SELECT COALESCE(SUM(a.file_size), 0) as total
-         FROM attachments a
-         JOIN ciphers c ON c.id = a.cipher_id
-         WHERE c.user_id = ?1"
+        (
+            "SELECT COALESCE(SUM(file_size), 0) as total FROM (
+                SELECT a.file_size AS file_size
+                FROM attachments a
+                JOIN ciphers c ON c.id = a.cipher_id
+                WHERE c.user_id = ?1
+                UNION ALL
+                SELECT p.file_size AS file_size
+                FROM attachments_pending p
+                JOIN ciphers c2 ON c2.id = p.cipher_id
+                WHERE c2.user_id = ?1
+            ) AS files"
+                .to_string(),
+            vec![JsValue::from_str(user_id)],
+        )
     };
-
-    let mut bindings: Vec<JsValue> = vec![JsValue::from_str(user_id)];
-    if let Some(id) = exclude_attachment {
-        bindings.push(JsValue::from_str(id));
-    }
 
     let row: Option<Value> = db
         .prepare(query_str)

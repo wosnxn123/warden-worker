@@ -147,16 +147,32 @@ function getTotalLimitBytes(env) {
 // Get user's current attachment usage
 async function getUserAttachmentUsage(db, userId, excludeAttachmentId) {
   const query = excludeAttachmentId
-    ? `SELECT COALESCE(SUM(a.file_size), 0) as total
-       FROM attachments a
-       JOIN ciphers c ON c.id = a.cipher_id
-       WHERE c.user_id = ?1 AND a.id != ?2`
-    : `SELECT COALESCE(SUM(a.file_size), 0) as total
-       FROM attachments a
-       JOIN ciphers c ON c.id = a.cipher_id
-       WHERE c.user_id = ?1`;
+    ? `SELECT COALESCE(SUM(file_size), 0) as total FROM (
+         SELECT a.file_size as file_size
+         FROM attachments a
+         JOIN ciphers c ON c.id = a.cipher_id
+         WHERE c.user_id = ?1 AND a.id != ?2
+         UNION ALL
+         SELECT p.file_size as file_size
+         FROM attachments_pending p
+         JOIN ciphers c2 ON c2.id = p.cipher_id
+         WHERE c2.user_id = ?1 AND p.id != ?2
+       ) AS files`
+    : `SELECT COALESCE(SUM(file_size), 0) as total FROM (
+         SELECT a.file_size as file_size
+         FROM attachments a
+         JOIN ciphers c ON c.id = a.cipher_id
+         WHERE c.user_id = ?1
+         UNION ALL
+         SELECT p.file_size as file_size
+         FROM attachments_pending p
+         JOIN ciphers c2 ON c2.id = p.cipher_id
+         WHERE c2.user_id = ?1
+       ) AS files`;
 
-  const bindings = excludeAttachmentId ? [userId, excludeAttachmentId] : [userId];
+  const bindings = excludeAttachmentId
+    ? [userId, excludeAttachmentId]
+    : [userId];
 
   const result = await db
     .prepare(query)
@@ -259,20 +275,20 @@ async function handleAzureUpload(request, env, cipherId, attachmentId, token) {
     );
   }
 
-  // Fetch attachment record
-  const attachment = await db
-    .prepare("SELECT * FROM attachments WHERE id = ?1")
+  // Fetch pending attachment record
+  const pending = await db
+    .prepare("SELECT * FROM attachments_pending WHERE id = ?1")
     .bind(attachmentId)
     .first();
 
-  if (!attachment) {
-    return new Response(JSON.stringify({ error: "Attachment not found" }), {
+  if (!pending) {
+    return new Response(JSON.stringify({ error: "Attachment not found or already uploaded" }), {
       status: 404,
       headers: { "Content-Type": "application/json" },
     });
   }
 
-  if (attachment.cipher_id !== cipherId) {
+  if (pending.cipher_id !== cipherId) {
     return new Response(
       JSON.stringify({ error: "Attachment does not belong to cipher" }),
       { status: 400, headers: { "Content-Type": "application/json" } }
@@ -350,39 +366,29 @@ async function handleAzureUpload(request, env, cipherId, attachmentId, token) {
     );
   }
 
-  // Re-enforce limits with actual uploaded size (should be same, but be safe)
-  try {
-    await enforceLimits(db, env, userId, uploadedSize, attachmentId);
-  } catch (err) {
-    try {
-      await bucket.delete(r2Key);
-    } catch {
-      // Ignore cleanup errors
-    }
-    return new Response(JSON.stringify({ error: err.message }), {
-      status: 400,
-      headers: { "Content-Type": "application/json" },
-    });
-  }
-
-  // Update attachment record in database
+  // Finalize upload: move pending -> attachments and touch revision timestamps
   const now = nowString();
-  await db
-    .prepare("UPDATE attachments SET file_size = ?1, updated_at = ?2 WHERE id = ?3")
-    .bind(uploadedSize, now, attachmentId)
-    .run();
-
-  // Touch cipher updated_at
-  await db
-    .prepare("UPDATE ciphers SET updated_at = ?1 WHERE id = ?2")
-    .bind(now, cipherId)
-    .run();
-
-  // Touch user updated_at
-  await db
-    .prepare("UPDATE users SET updated_at = ?1 WHERE id = ?2")
-    .bind(now, userId)
-    .run();
+  await db.batch([
+    db
+      .prepare(
+        "INSERT INTO attachments (id, cipher_id, file_name, file_size, akey, created_at, updated_at, organization_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)"
+      )
+      .bind(
+        attachmentId,
+        cipherId,
+        pending.file_name,
+        uploadedSize,
+        pending.akey,
+        pending.created_at || now,
+        now,
+        pending.organization_id || null
+      ),
+    db
+      .prepare("DELETE FROM attachments_pending WHERE id = ?1")
+      .bind(attachmentId),
+    db.prepare("UPDATE ciphers SET updated_at = ?1 WHERE id = ?2").bind(now, cipherId),
+    db.prepare("UPDATE users SET updated_at = ?1 WHERE id = ?2").bind(now, userId),
+  ]);
 
   return new Response(null, { status: 201 });
 }
