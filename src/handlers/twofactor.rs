@@ -391,7 +391,7 @@ pub async fn recover(
     }
 
     // Check recovery code (case-insensitive)
-    let is_valid = user.totp_recover.as_ref().map_or(false, |stored_code| {
+    let is_valid = user.totp_recover.as_ref().is_some_and(|stored_code| {
         ct_eq(
             &stored_code.to_uppercase(),
             &data.recovery_code.to_uppercase(),
