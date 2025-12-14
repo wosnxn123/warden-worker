@@ -9,22 +9,45 @@ jobs:
     build-and-deploy:
         name: Deploy to Cloudflare (Dev)
         runs-on: ubuntu-latest
+        env:
+            # Pin tool versions to avoid upstream updates breaking CI
+            WORKER_BUILD_VERSION: "0.7.1"
+            WRANGLER_VERSION: "4.54.0"
+
+            # Required for wrangler
+            CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+            CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
         steps:
             - uses: actions/checkout@v4
 
-            - run: rustup toolchain install stable --profile minimal
-            
-            - run: rustup target add wasm32-unknown-unknown
+            - name: Set up Node.js (for npx wrangler)
+              uses: actions/setup-node@v4
+              with:
+                  node-version: "20"
+
+            - name: Install Rust toolchain (from rust-toolchain.toml)
+              run: |
+                  set -euo pipefail
+                  TOOLCHAIN="$(sed -n 's/^channel[[:space:]]*=[[:space:]]*"\([^"]*\)".*$/\1/p' rust-toolchain.toml | head -n 1)"
+                  if [ -z "$TOOLCHAIN" ]; then
+                    echo "❌ Failed to read toolchain channel from rust-toolchain.toml" >&2
+                    exit 1
+                  fi
+                  echo "Using Rust toolchain: $TOOLCHAIN"
+                  echo "RUSTUP_TOOLCHAIN=$TOOLCHAIN" >> "$GITHUB_ENV"
+                  rustup toolchain install "$TOOLCHAIN" --profile minimal --component rustfmt --component clippy --target wasm32-unknown-unknown
             
             - name: Install lld
               run: sudo apt install -y lld clang gcc llvm
 
             - name: Install worker-build
               run: |
-                  if ! command -v worker-build &> /dev/null; then
-                    cargo install worker-build
+                  set -euo pipefail
+                  if command -v worker-build &> /dev/null; then
+                    echo "worker-build already installed: $(worker-build --version || true)"
                   fi
+                  cargo install --locked -q worker-build --version "${WORKER_BUILD_VERSION}"
 
             - name: Download and extract frontend (bw_web_builds)
               run: |
@@ -73,11 +96,9 @@ jobs:
                   fi
 
             - name: Apply D1 database migrations (dev)
-              env:
-                  CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-                  CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
               run: |
-                  set -o pipefail  # Ensure pipe returns first non-zero exit code
+                  set -euo pipefail  # Ensure pipe returns first non-zero exit code
+                  WRANGLER="npx --yes wrangler@${WRANGLER_VERSION}"
                   
                   # Apply migrations with retry loop to handle legacy ensure_schema columns
                   MAX_RETRIES=10
@@ -86,7 +107,7 @@ jobs:
                   while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
                     echo "🔄 Attempting to apply migrations (attempt $((RETRY_COUNT + 1))/$MAX_RETRIES)..."
                     
-                    if npx wrangler d1 migrations apply vault1 --env dev --remote 2>&1 | tee migration_output.txt; then
+                    if $WRANGLER d1 migrations apply vault1 --env dev --remote 2>&1 | tee migration_output.txt; then
                       echo "✅ All migrations applied successfully"
                       exit 0
                     fi
@@ -106,7 +127,7 @@ jobs:
                       echo "📝 Marking migration as applied..."
                       
                       # Initialize d1_migrations table and mark this migration as applied
-                      npx wrangler d1 execute vault1 --env dev --remote --command "
+                      $WRANGLER d1 execute vault1 --env dev --remote --command "
                         CREATE TABLE IF NOT EXISTS d1_migrations (
                           id INTEGER PRIMARY KEY AUTOINCREMENT,
                           name TEXT UNIQUE NOT NULL,
@@ -129,10 +150,10 @@ jobs:
 
             - uses: cloudflare/wrangler-action@v3
               id: cf
-              env:
-                  D1_DATABASE_ID: ${{ secrets.D1_DATABASE_ID_DEV }} 
               with:
                   apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
                   accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+                  wranglerVersion: ${{ env.WRANGLER_VERSION }}
+                  packageManager: npm
 
                   command: deploy --env dev
