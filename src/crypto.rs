@@ -1,6 +1,8 @@
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use constant_time_eq::constant_time_eq;
 use js_sys::Uint8Array;
+use pbkdf2::pbkdf2_hmac;
+use sha2::Sha256;
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{Crypto, CryptoKey, SubtleCrypto};
@@ -8,10 +10,16 @@ use worker::js_sys;
 
 use crate::error::AppError;
 
-/// Number of PBKDF2 iterations for server-side password hashing
-const SERVER_PBKDF2_ITERATIONS: u32 = 100_000;
-/// Salt length in bytes
-const SALT_LENGTH: usize = 16;
+/// Minimum PBKDF2 iterations for server-side password hashing (new global minimum).
+///
+/// NOTE: Cloudflare Workers native WebCrypto PBKDF2 currently rejects iteration counts > 100_000.
+/// We therefore run PBKDF2 in pure Rust/WASM so we can safely use higher iteration counts.
+///
+/// This is CPU-expensive and is expected to be executed inside a Durable Object for Free plan deployments.
+pub const MIN_SERVER_PBKDF2_ITERATIONS: u32 = 600_000;
+
+/// Salt length in bytes for server-side password hashing.
+pub const PASSWORD_SALT_LENGTH: usize = 64;
 /// Derived key length in bits
 const KEY_LENGTH_BITS: u32 = 256;
 
@@ -32,61 +40,30 @@ fn subtle_crypto() -> Result<SubtleCrypto, AppError> {
     Ok(get_crypto()?.subtle())
 }
 
-/// Derives a key using PBKDF2-SHA256.
-pub async fn pbkdf2_sha256(
+/// Derives a key using PBKDF2-HMAC-SHA256 (pure Rust).
+pub fn pbkdf2_sha256(
     password: &[u8],
     salt: &[u8],
     iterations: u32,
     key_length_bits: u32,
 ) -> Result<Vec<u8>, AppError> {
-    let subtle = subtle_crypto()?;
+    if !key_length_bits.is_multiple_of(8) {
+        return Err(AppError::Crypto(format!(
+            "PBKDF2 key length must be a multiple of 8 bits (got {})",
+            key_length_bits
+        )));
+    }
 
-    // Import the password as a raw key material
-    let password_array = Uint8Array::new_from_slice(password);
-    let password_obj = password_array.as_ref();
-    let key_material = JsFuture::from(
-        subtle
-            .import_key_with_str(
-                "raw",
-                password_obj,
-                "PBKDF2",
-                false,
-                &js_sys::Array::of1(&JsValue::from_str("deriveBits")),
-            )
-            .map_err(|e| AppError::Crypto(format!("PBKDF2 import_key failed: {:?}", e)))?,
-    )
-    .await
-    .map_err(|e| AppError::Crypto(format!("PBKDF2 import_key await failed: {:?}", e)))?;
-
-    let salt_array = Uint8Array::new_from_slice(salt);
-    // Define PBKDF2 parameters
-    let params = web_sys::Pbkdf2Params::new(
-        "PBKDF2",
-        JsValue::from_str("SHA-256").as_ref(),
-        iterations,
-        salt_array.as_ref(),
-    );
-
-    // Derive the bits
-    let derived_bits = JsFuture::from(
-        subtle
-            .derive_bits_with_object(
-                params.as_ref(),
-                &CryptoKey::from(key_material),
-                key_length_bits,
-            )
-            .map_err(|e| AppError::Crypto(format!("PBKDF2 derive_bits failed: {:?}", e)))?,
-    )
-    .await
-    .map_err(|e| AppError::Crypto(format!("PBKDF2 derive_bits await failed: {:?}", e)))?;
-
-    Ok(js_sys::Uint8Array::new(&derived_bits).to_vec())
+    let dk_len = (key_length_bits / 8) as usize;
+    let mut out = vec![0u8; dk_len];
+    pbkdf2_hmac::<Sha256>(password, salt, iterations, &mut out);
+    Ok(out)
 }
 
 /// Generates a cryptographically secure random salt.
 pub fn generate_salt() -> Result<String, AppError> {
     let crypto = get_crypto()?;
-    let salt = Uint8Array::new_with_length(SALT_LENGTH as u32);
+    let salt = Uint8Array::new_with_length(PASSWORD_SALT_LENGTH as u32);
     crypto
         .get_random_values_with_array_buffer_view(&salt)
         .map_err(|e| AppError::Crypto(format!("Failed to generate random salt: {:?}", e)))?;
@@ -99,6 +76,7 @@ pub fn generate_salt() -> Result<String, AppError> {
 pub async fn hash_password_for_storage(
     client_password_hash: &str,
     salt: &str,
+    iterations: u32,
 ) -> Result<String, AppError> {
     let salt_bytes = BASE64
         .decode(salt)
@@ -107,10 +85,9 @@ pub async fn hash_password_for_storage(
     let derived = pbkdf2_sha256(
         client_password_hash.as_bytes(),
         &salt_bytes,
-        SERVER_PBKDF2_ITERATIONS,
+        iterations,
         KEY_LENGTH_BITS,
-    )
-    .await?;
+    )?;
 
     Ok(BASE64.encode(derived))
 }
@@ -121,8 +98,9 @@ pub async fn verify_password(
     client_password_hash: &str,
     stored_hash: &str,
     salt: &str,
+    iterations: u32,
 ) -> Result<bool, AppError> {
-    let computed_hash = hash_password_for_storage(client_password_hash, salt).await?;
+    let computed_hash = hash_password_for_storage(client_password_hash, salt, iterations).await?;
     Ok(constant_time_eq(
         computed_hash.as_bytes(),
         stored_hash.as_bytes(),

@@ -136,8 +136,35 @@ If the binding is missing, requests proceed without rate limiting (graceful degr
 
 ## Configuration
 
+### Durable Objects (CPU Offloading)
+
+Cloudflare Workers Free plan has a very small per-request CPU budget. Two endpoints are particularly CPU-heavy:
+
+- `POST /api/ciphers/import`: large JSON payload (typically 500kB–1MB) + parsing + batch inserts.
+- `POST /identity/connect/token`: server-side PBKDF2 for password verification.
+
+To keep the main Worker fast while still supporting these operations, Warden can **offload selected endpoints to Durable Objects (DO)**:
+
+- **Heavy DO (`HEAVY_DO`)**: implemented in Rust as `HeavyDo` (reuses the existing axum router) so CPU-heavy endpoints (import/login/password verification) can run with a higher CPU budget.
+
+**How to enable/disable**
+
+It's disabled by default. You can enable it by setting `HEAVY_DO_ENABLED=1` and adding the `HEAVY_DO` binding in `wrangler.toml`.
+
+> [!NOTE]
+> Durable Objects can incur two types of billing: compute and storage. Storage is not used in this project, and the free plan allows 100,000 requests and 13,000 GB-s duration per day, which should be more than enough for most users. See [Cloudflare Durable Objects pricing](https://developers.cloudflare.com/durable-objects/platform/pricing/) for details.
+> If you choose to disable Durable Objects, you may need subscribe to a paid plan to avoid being throttled by Cloudflare.
+
+### Environment Variables
+
 Configure environment variables in `wrangler.toml` under `[vars]`, or set them via Cloudflare Dashboard:
 
+* **`HEAVY_DO_ENABLED`** (Optional, Default: `0`):
+  - Enable routing CPU-heavy endpoints to Durable Object (`HEAVY_DO`).
+  - Recommended on Free plan if you hit CPU time limits on import/login.
+* **`PASSWORD_ITERATIONS`** (Optional, Default: `600000`):
+  - PBKDF2 iterations for server-side password hashing.
+  - Minimum is 600000.
 * **`TRASH_AUTO_DELETE_DAYS`** (Optional, Default: `30`): 
   - Days to keep soft-deleted items before purge. 
   - Set to `0` or negative to disable.

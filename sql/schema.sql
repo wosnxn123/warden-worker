@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS users (
     master_password_hash TEXT NOT NULL,
     master_password_hint TEXT,
     password_salt TEXT, -- Salt for server-side PBKDF2 hashing (NULL for legacy users pending migration)
+    password_iterations INTEGER NOT NULL DEFAULT 600000, -- Per-user server-side PBKDF2 iteration count (migrated on login)
     key TEXT NOT NULL, -- The encrypted symmetric key
     private_key TEXT NOT NULL, -- encrypted asymmetric private_key
     public_key TEXT NOT NULL, -- asymmetric public_key

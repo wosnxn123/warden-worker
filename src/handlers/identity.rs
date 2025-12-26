@@ -11,7 +11,7 @@ use crate::{
     crypto::{ct_eq, generate_salt, hash_password_for_storage, validate_totp},
     db,
     error::AppError,
-    handlers::allow_totp_drift,
+    handlers::{allow_totp_drift, server_password_iterations},
     models::twofactor::{RememberTokenData, TwoFactor, TwoFactorType},
     models::user::User,
 };
@@ -408,19 +408,29 @@ pub async fn token(
                 }
             }
 
-            // Migrate legacy user to PBKDF2 if password matches and no salt exists
-            let user = if verification.needs_migration() {
-                // Generate new salt and hash the password
+            // Migrate/upgrade server-side password hashing parameters on successful verification.
+            //
+            // - Legacy users (no salt) are upgraded to server-side PBKDF2.
+            // - Existing users are upgraded if their per-user iteration count is below the configured minimum.
+            let desired_iterations = server_password_iterations(&env) as i32;
+            let needs_upgrade =
+                verification.needs_migration() || user.password_iterations < desired_iterations;
+
+            let user = if needs_upgrade {
+                // Generate new salt and hash the password using the desired iterations.
                 let new_salt = generate_salt()?;
-                let new_hash = hash_password_for_storage(&password_hash, &new_salt).await?;
+                let new_hash =
+                    hash_password_for_storage(&password_hash, &new_salt, desired_iterations as u32)
+                        .await?;
                 let now = Utc::now().to_rfc3339();
 
                 // Update user in database
                 query!(
                     &db,
-                    "UPDATE users SET master_password_hash = ?1, password_salt = ?2, updated_at = ?3 WHERE id = ?4",
+                    "UPDATE users SET master_password_hash = ?1, password_salt = ?2, password_iterations = ?3, updated_at = ?4 WHERE id = ?5",
                     &new_hash,
                     &new_salt,
+                    desired_iterations,
                     &now,
                     &user.id
                 )
@@ -433,6 +443,7 @@ pub async fn token(
                 User {
                     master_password_hash: new_hash,
                     password_salt: Some(new_salt),
+                    password_iterations: desired_iterations,
                     updated_at: now,
                     ..user
                 }

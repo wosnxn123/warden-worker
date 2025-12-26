@@ -72,6 +72,60 @@ function base64UrlDecode(str) {
   return bytes;
 }
 
+function isTruthy(value) {
+  if (value == null) return false;
+  const s = value.toString().trim().toLowerCase();
+  return s === "1" || s === "true" || s === "yes" || s === "on";
+}
+
+function heavyDoEnabled(env) {
+  return isTruthy(getEnvVar(env, "HEAVY_DO_ENABLED", "0"));
+}
+
+function getBearerToken(request) {
+  const auth = request.headers.get("Authorization") || request.headers.get("authorization");
+  if (!auth) return null;
+  const m = auth.match(/^\s*Bearer\s+(.+?)\s*$/i);
+  return m ? m[1] : null;
+}
+
+// Decode JWT payload WITHOUT verifying signature (used only for sharding DO instances).
+// The Durable Object handler will perform full verification and reject invalid tokens.
+function decodeJwtPayloadUnsafe(token) {
+  try {
+    const parts = token.split(".");
+    if (parts.length !== 3) return null;
+    const payloadB64 = parts[1];
+    const payloadJson = new TextDecoder().decode(base64UrlDecode(payloadB64));
+    return JSON.parse(payloadJson);
+  } catch {
+    return null;
+  }
+}
+
+const AUTH_DO_EXACT_PATHS = new Set([
+  // Login
+  "/identity/connect/token",
+  // Registration (server-side password hashing)
+  "/identity/accounts/register",
+  "/identity/accounts/register/finish",
+  // Password/KDF changes
+  "/api/accounts/password",
+  "/api/accounts/kdf",
+  // Dangerous ops requiring password verification
+  "/api/accounts/delete",
+  "/api/accounts",
+  "/api/ciphers/purge",
+  // Key rotation may verify master password
+  "/api/accounts/key-management/rotate-user-account-keys",
+]);
+
+function isAuthDoPath(pathname) {
+  if (AUTH_DO_EXACT_PATHS.has(pathname)) return true;
+  if (pathname.startsWith("/api/two-factor")) return true;
+  return false;
+}
+
 // Parse azure-upload route: /api/ciphers/{id}/attachment/{attachment_id}/azure-upload
 function parseAzureUploadPath(path) {
   const parts = path.replace(/^\//, "").split("/");
@@ -502,6 +556,61 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
+    // Optional: route selected CPU-heavy endpoints to Durable Objects.
+    // This keeps the main Worker on a low-CPU path while allowing heavy work to complete.
+    if (heavyDoEnabled(env)) {
+      // Import: route to Rust Durable Object (HeavyDo) to reuse the existing Rust import logic.
+      if (request.method === "POST" && url.pathname === "/api/ciphers/import") {
+        if (!env.HEAVY_DO) {
+          return new Response(JSON.stringify({ error: "HEAVY_DO binding not configured" }), {
+            status: 500,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+
+        // Shard by user id (JWT sub) WITHOUT verifying signature here (cheap).
+        const token = getBearerToken(request);
+        const sub = token ? decodeJwtPayloadUnsafe(token)?.sub : null;
+        const name = sub ? `import:${sub}` : "import:default";
+        const id = env.HEAVY_DO.idFromName(name);
+        const stub = env.HEAVY_DO.get(id);
+        return stub.fetch(request);
+      }
+
+      // Auth/password verification: run inside Rust DO (higher CPU budget).
+      if (isAuthDoPath(url.pathname)) {
+        if (!env.HEAVY_DO) {
+          return new Response(JSON.stringify({ error: "HEAVY_DO binding not configured" }), {
+            status: 500,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+
+        let name = "auth:default";
+
+        if (url.pathname === "/identity/connect/token") {
+          // Shard login DO by username (email) to avoid serializing all logins onto one DO instance.
+          try {
+            const bodyText = await request.clone().text();
+            const params = new URLSearchParams(bodyText);
+            const username = (params.get("username") || "default").toLowerCase();
+            name = `auth:login:${username}`;
+          } catch {
+            // Fall back to default shard.
+          }
+        } else {
+          // Other auth endpoints are JWT-authenticated; shard by sub.
+          const token = getBearerToken(request);
+          const sub = token ? decodeJwtPayloadUnsafe(token)?.sub : null;
+          if (sub) name = `auth:user:${sub}`;
+        }
+
+        const id = env.HEAVY_DO.idFromName(name);
+        const stub = env.HEAVY_DO.get(id);
+        return stub.fetch(request);
+      }
+    }
+
     // Intercept PUT requests to azure-upload endpoint
     if (request.method === "PUT") {
       const parsed = parseAzureUploadPath(url.pathname);
@@ -551,4 +660,8 @@ export default {
     return worker.scheduled(event);
   },
 };
+
+// Re-export Rust Durable Object class implemented in WASM.
+// wrangler.toml binds HEAVY_DO -> class_name = "HeavyDo".
+export { HeavyDo } from "../build/index.js";
 

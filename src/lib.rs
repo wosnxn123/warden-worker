@@ -8,6 +8,7 @@ use worker::*;
 mod auth;
 mod crypto;
 mod db;
+mod durable;
 mod error;
 mod handlers;
 mod models;
