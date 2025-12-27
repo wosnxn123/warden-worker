@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{json, Map, Value};
 
@@ -317,10 +319,21 @@ pub struct CipherRequestData {
     pub favorite: Option<bool>,
     #[serde(flatten)]
     pub type_fields: CipherTypeFields,
+    /// Used during key rotation to update attachment keys and encrypted filenames.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attachments2: Option<HashMap<String, Attachments2Data>>,
     // The revision datetime (in ISO 8601 format) of the client's local copy
     // Used to prevent updating a cipher when client doesn't have the latest version
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_known_revision_date: Option<String>,
+}
+
+/// Attachment metadata sent by clients during key rotation.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct Attachments2Data {
+    pub file_name: String,
+    pub key: String,
 }
 
 /// Represents the full request payload for creating a cipher with collections.

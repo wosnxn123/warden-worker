@@ -14,7 +14,7 @@ pub struct User {
     pub master_password_hash: String,
     pub master_password_hint: Option<String>,
     pub password_salt: Option<String>, // Salt for server-side PBKDF2 (NULL for legacy users)
-    pub password_iterations: i32,      // Server-side PBKDF2 iterations used for master_password_hash
+    pub password_iterations: i32, // Server-side PBKDF2 iterations used for master_password_hash
     pub key: String,
     pub private_key: String,
     pub public_key: String,

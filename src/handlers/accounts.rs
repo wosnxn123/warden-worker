@@ -754,6 +754,7 @@ pub async fn post_rotatekey(
     // Only update personal ciphers (organization_id is None)
     let mut cipher_statements: Vec<D1PreparedStatement> =
         Vec::with_capacity(personal_ciphers.len());
+    let mut attachment_statements: Vec<D1PreparedStatement> = Vec::new();
     for cipher in personal_ciphers {
         // id is guaranteed to exist (validated above)
         let cipher_id = cipher.id.as_ref().unwrap();
@@ -778,8 +779,27 @@ pub async fn post_rotatekey(
         )
         .map_err(|_| AppError::Database)?;
         cipher_statements.push(stmt);
+
+        // Update attachments key and encrypted filename when rotating.
+        // The Bitwarden clients send `attachments2` only during key rotation.
+        if let Some(attachments2) = &cipher.attachments2 {
+            for (attachment_id, attachment) in attachments2 {
+                let stmt = query!(
+                    &db,
+                    "UPDATE attachments SET file_name = ?1, akey = ?2, updated_at = ?3 WHERE id = ?4 AND cipher_id = ?5",
+                    attachment.file_name,
+                    attachment.key,
+                    now,
+                    attachment_id,
+                    cipher_id
+                )
+                .map_err(|_| AppError::Database)?;
+                attachment_statements.push(stmt);
+            }
+        }
     }
     db::execute_in_batches(&db, cipher_statements, batch_size).await?;
+    db::execute_in_batches(&db, attachment_statements, batch_size).await?;
 
     // Generate new salt and hash the new password
     let new_salt = generate_salt()?;
