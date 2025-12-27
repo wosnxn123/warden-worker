@@ -10,7 +10,7 @@
  * the Rust/WASM layer with axum body conversion.
  *
  * Additionally, this wrapper can optionally offload CPU-heavy endpoints to a Rust Durable Object
- * (higher CPU budget) by enabling `HEAVY_DO_ENABLED=1` and binding `HEAVY_DO` in `wrangler.toml`.
+ * (higher CPU budget) by binding `HEAVY_DO` in `wrangler.toml`.
  * This is used for operations like imports and password verification paths, keeping the main
  * Worker on a low-CPU fast path for typical requests.
  *
@@ -19,16 +19,6 @@
 
 import RustWorker from "../build/index.js";
 import { base64UrlDecode, handleAzureUpload, handleDownload } from "./attachments.js";
-
-function isTruthy(value) {
-  if (value == null) return false;
-  const s = value.toString().trim().toLowerCase();
-  return s === "1" || s === "true" || s === "yes" || s === "on";
-}
-
-function heavyDoEnabled(env) {
-  return isTruthy(getEnvVar(env, "HEAVY_DO_ENABLED", "0"));
-}
 
 function getBearerToken(request) {
   const auth = request.headers.get("Authorization") || request.headers.get("authorization");
@@ -106,19 +96,6 @@ function parseDownloadPath(path) {
   return null;
 }
 
-// Helper to get env var with fallback
-function getEnvVar(env, name, defaultValue = null) {
-  try {
-    const value = env[name];
-    if (value && typeof value.toString === "function") {
-      return value.toString();
-    }
-    return value || defaultValue;
-  } catch {
-    return defaultValue;
-  }
-}
-
 // Main fetch handler
 export default {
   async fetch(request, env, ctx) {
@@ -126,17 +103,9 @@ export default {
 
     // Optional: route selected CPU-heavy endpoints to Durable Objects.
     // This keeps the main Worker on a low-CPU path while allowing heavy work to complete.
-    if (heavyDoEnabled(env)) {
+    if (env.HEAVY_DO) {
       // Import: route to Rust Durable Object (HeavyDo) to reuse the existing Rust import logic.
       if (request.method === "POST" && url.pathname === "/api/ciphers/import") {
-        if (!env.HEAVY_DO) {
-          console.error("HEAVY_DO binding not configured");
-          return new Response(JSON.stringify({ error: "HEAVY_DO binding not configured" }), {
-            status: 500,
-            headers: { "Content-Type": "application/json" },
-          });
-        }
-
         // Shard by user id (JWT sub) WITHOUT verifying signature here (cheap).
         const token = getBearerToken(request);
         const sub = token ? decodeJwtPayloadUnsafe(token)?.sub : null;
@@ -148,13 +117,6 @@ export default {
 
       // Auth/password verification: run inside Rust DO (higher CPU budget).
       if (isAuthDoPath(url.pathname)) {
-        if (!env.HEAVY_DO) {
-          return new Response(JSON.stringify({ error: "HEAVY_DO binding not configured" }), {
-            status: 500,
-            headers: { "Content-Type": "application/json" },
-          });
-        }
-
         let name = "auth:default";
 
         if (url.pathname === "/identity/connect/token") {

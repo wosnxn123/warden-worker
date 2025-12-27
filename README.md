@@ -149,7 +149,7 @@ To keep the main Worker fast while still supporting these operations, Warden can
 
 **How to enable/disable**
 
-It's disabled by default. You can enable it by setting `HEAVY_DO_ENABLED=1` and adding the `HEAVY_DO` binding in `wrangler.toml`.
+Whether CPU-heavy endpoints are offloaded is determined by whether the `HEAVY_DO` Durable Object binding is configured in `wrangler.toml`.
 
 > [!NOTE]
 > Durable Objects can incur two types of billing: compute and storage. Storage is not used in this project, and the free plan allows 100,000 requests and 13,000 GB-s duration per day, which should be more than enough for most users. See [Cloudflare Durable Objects pricing](https://developers.cloudflare.com/durable-objects/platform/pricing/) for details.
@@ -159,9 +159,6 @@ It's disabled by default. You can enable it by setting `HEAVY_DO_ENABLED=1` and 
 
 Configure environment variables in `wrangler.toml` under `[vars]`, or set them via Cloudflare Dashboard:
 
-* **`HEAVY_DO_ENABLED`** (Optional, Default: `0`):
-  - Enable routing CPU-heavy endpoints to Durable Object (`HEAVY_DO`).
-  - Recommended on Free plan if you hit CPU time limits on import/login.
 * **`PASSWORD_ITERATIONS`** (Optional, Default: `600000`):
   - PBKDF2 iterations for server-side password hashing.
   - Minimum is 600000.

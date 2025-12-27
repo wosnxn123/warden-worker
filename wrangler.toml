@@ -43,10 +43,6 @@ html_handling = "auto-trailing-slash"
 run_worker_first = ["/api/*", "/identity/*"]
 
 [vars]
-# Enable offloading CPU-heavy endpoints (login PBKDF2 + import JSON parse) to Durable Objects.
-# Defaults to disabled.
-HEAVY_DO_ENABLED = "1"
-
 # Server-side password hashing PBKDF2 iterations (stored per-user).
 # Defaults to 600000, and will be clamped to a minimum of 600000 even if set lower.
 # Existing users created before this change are assumed to be at 100000 and will be upgraded on login.
@@ -95,9 +91,6 @@ name = "warden-worker-dev"
 keep_vars = true
 workers_dev = false
 preview_urls = false
-
-[env.dev.vars]
-HEAVY_DO_ENABLED = "1"
 
 [env.dev.durable_objects]
 bindings = [
