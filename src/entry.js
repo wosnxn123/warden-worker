@@ -41,27 +41,97 @@ function decodeJwtPayloadUnsafe(token) {
   }
 }
 
-const AUTH_DO_EXACT_PATHS = new Set([
-  // Login
-  "/identity/connect/token",
-  // Registration (server-side password hashing)
-  "/identity/accounts/register",
-  "/identity/accounts/register/finish",
+function normalizeUsername(username) {
+  if (typeof username !== "string") return null;
+  const v = username.trim().toLowerCase();
+  return v ? v : null;
+}
+
+async function getHeavyDoShardKey(request, url) {
+  const pathname = url.pathname;
+
+  // /identity/connect/token can be:
+  // - password grant (has username)
+  // - refresh_token grant (has refresh_token JWT containing sub)
+  if (pathname === "/identity/connect/token") {
+    try {
+      const bodyText = await request.clone().text();
+      const params = new URLSearchParams(bodyText);
+
+      // Prefer user id when available (refresh_token contains refresh_claims with sub).
+      const refreshToken = params.get("refresh_token");
+      if (refreshToken) {
+        const sub = decodeJwtPayloadUnsafe(refreshToken)?.sub;
+        if (typeof sub === "string" && sub) return sub;
+      }
+
+      const username = params.get("username");
+      const normalized = normalizeUsername(username);
+      return normalized ? normalized : null;
+    } catch {
+      return null;
+    }
+  }
+
+  // Registration endpoints and 2FA recovery are not JWT-authenticated; request body uses `email` as username.
+  if (
+    pathname === "/identity/accounts/register" ||
+    pathname === "/identity/accounts/register/finish" ||
+    pathname === "/api/two-factor/recover"
+  ) {
+    try {
+      const body = await request.clone().json();
+      const normalized = normalizeUsername(body?.email);
+      return normalized ? normalized : null;
+    } catch {
+      return null;
+    }
+  }
+
+  // Default: shard by user id (JWT sub).
+  const token = getBearerToken(request);
+  const sub = token ? decodeJwtPayloadUnsafe(token)?.sub : null;
+  if (typeof sub === "string" && sub) return sub;
+
+  return null;
+}
+
+// All routes offloaded to HEAVY_DO (centralized, aligned with src/router.rs).
+// Keyed by path, with allowed methods to avoid accidental over-routing.
+const HEAVY_DO_ROUTE_METHODS = new Map([
+  // Import
+  ["/api/ciphers/import", new Set(["POST"])],
+
+  // Identity/Auth (password hashing / verification)
+  ["/identity/connect/token", new Set(["POST"])],
+  ["/identity/accounts/register", new Set(["POST"])],
+  ["/identity/accounts/register/finish", new Set(["POST"])],
+
   // Password/KDF changes
-  "/api/accounts/password",
-  "/api/accounts/kdf",
+  ["/api/accounts/password", new Set(["POST"])],
+  ["/api/accounts/kdf", new Set(["POST"])],
+
   // Dangerous ops requiring password verification
-  "/api/accounts/delete",
-  "/api/accounts",
-  "/api/ciphers/purge",
-  // Key rotation may verify master password
-  "/api/accounts/key-management/rotate-user-account-keys",
+  ["/api/accounts/delete", new Set(["POST"])],
+  ["/api/accounts", new Set(["DELETE"])],
+  ["/api/ciphers/purge", new Set(["POST"])],
+
+  // Key rotation needs verify master password and update entire vault
+  ["/api/accounts/key-management/rotate-user-account-keys", new Set(["POST"])],
+
+  // Two-factor
+  ["/api/two-factor/get-authenticator", new Set(["POST"])],
+  ["/api/two-factor/authenticator", new Set(["POST", "PUT", "DELETE"])],
+  ["/api/two-factor/disable", new Set(["POST", "PUT"])],
+  ["/api/two-factor/get-recover", new Set(["POST"])],
+  ["/api/two-factor/recover", new Set(["POST"])],
 ]);
 
-function isAuthDoPath(pathname) {
-  if (AUTH_DO_EXACT_PATHS.has(pathname)) return true;
-  if (pathname.startsWith("/api/two-factor")) return true;
-  return false;
+function shouldOffloadToHeavyDo(request, url) {
+  const methods = HEAVY_DO_ROUTE_METHODS.get(url.pathname);
+  if (!methods) return false;
+  const method = (request.method || "GET").toUpperCase();
+  return methods.has(method);
 }
 
 // Parse azure-upload route: /api/ciphers/{id}/attachment/{attachment_id}/azure-upload
@@ -104,38 +174,9 @@ export default {
     // Optional: route selected CPU-heavy endpoints to Durable Objects.
     // This keeps the main Worker on a low-CPU path while allowing heavy work to complete.
     if (env.HEAVY_DO) {
-      // Import: route to Rust Durable Object (HeavyDo) to reuse the existing Rust import logic.
-      if (request.method === "POST" && url.pathname === "/api/ciphers/import") {
-        // Shard by user id (JWT sub) WITHOUT verifying signature here (cheap).
-        const token = getBearerToken(request);
-        const sub = token ? decodeJwtPayloadUnsafe(token)?.sub : null;
-        const name = sub ? `import:${sub}` : "import:default";
-        const id = env.HEAVY_DO.idFromName(name);
-        const stub = env.HEAVY_DO.get(id);
-        return stub.fetch(request);
-      }
-
-      // Auth/password verification: run inside Rust DO (higher CPU budget).
-      if (isAuthDoPath(url.pathname)) {
-        let name = "auth:default";
-
-        if (url.pathname === "/identity/connect/token") {
-          // Shard login DO by username (email) to avoid serializing all logins onto one DO instance.
-          try {
-            const bodyText = await request.clone().text();
-            const params = new URLSearchParams(bodyText);
-            const username = (params.get("username") || "default").toLowerCase();
-            name = `auth:login:${username}`;
-          } catch {
-            // Fall back to default shard.
-          }
-        } else {
-          // Other auth endpoints are JWT-authenticated; shard by sub.
-          const token = getBearerToken(request);
-          const sub = token ? decodeJwtPayloadUnsafe(token)?.sub : null;
-          if (sub) name = `auth:user:${sub}`;
-        }
-
+      if (shouldOffloadToHeavyDo(request, url)) {
+        const shardKey = await getHeavyDoShardKey(request, url);
+        const name = shardKey ? `user:${shardKey}` : "user:default";
         const id = env.HEAVY_DO.idFromName(name);
         const stub = env.HEAVY_DO.get(id);
         return stub.fetch(request);
@@ -198,4 +239,3 @@ export default {
 // Re-export Rust Durable Object class implemented in WASM.
 // wrangler.toml binds HEAVY_DO -> class_name = "HeavyDo".
 export { HeavyDo } from "../build/index.js";
-
