@@ -138,21 +138,24 @@ If the binding is missing, requests proceed without rate limiting (graceful degr
 
 ### Durable Objects (CPU Offloading)
 
-Cloudflare Workers Free plan has a very small per-request CPU budget. Two endpoints are particularly CPU-heavy:
+Cloudflare Workers Free plan has a very small per-request CPU budget. Two kinds of endpoints are particularly CPU-heavy:
 
-- `POST /api/ciphers/import`: large JSON payload (typically 500kB–1MB) + parsing + batch inserts.
-- `POST /identity/connect/token`: server-side PBKDF2 for password verification.
+- import endpoint: large JSON payload (typically 500kB–1MB) + parsing + batch inserts.
+- registration, login and password verification endpoint: server-side PBKDF2 for password verification.
 
 To keep the main Worker fast while still supporting these operations, Warden can **offload selected endpoints to Durable Objects (DO)**:
 
-- **Heavy DO (`HEAVY_DO`)**: implemented in Rust as `HeavyDo` (reuses the existing axum router) so CPU-heavy endpoints (import/login/password verification) can run with a higher CPU budget.
+- **Heavy DO (`HEAVY_DO`)**: implemented in Rust as `HeavyDo` (reuses the existing axum router) so CPU-heavy endpoints can run with a higher CPU budget.
 
 **How to enable/disable**
 
 Whether CPU-heavy endpoints are offloaded is determined by whether the `HEAVY_DO` Durable Object binding is configured in `wrangler.toml`.
 
 > [!NOTE]
+> Durable Objects have much higher CPU budget of 30 seconds per request in free plan(see [Cloudflare Durable Objects limits](https://developers.cloudflare.com/durable-objects/platform/limits/)), so we can use it to offload the CPU-heavy endpoints.
+>
 > Durable Objects can incur two types of billing: compute and storage. Storage is not used in this project, and the free plan allows 100,000 requests and 13,000 GB-s duration per day, which should be more than enough for most users. See [Cloudflare Durable Objects pricing](https://developers.cloudflare.com/durable-objects/platform/pricing/) for details.
+>
 > If you choose to disable Durable Objects, you may need subscribe to a paid plan to avoid being throttled by Cloudflare.
 
 ### Environment Variables

@@ -45,7 +45,7 @@ run_worker_first = ["/api/*", "/identity/*"]
 [vars]
 # Server-side password hashing PBKDF2 iterations (stored per-user).
 # Defaults to 600000, and will be clamped to a minimum of 600000 even if set lower.
-# Existing users created before this change are assumed to be at 100000 and will be upgraded on login.
+# Existing users whose password iterations are less than this value will be upgraded on login.
 # PASSWORD_ITERATIONS = "600000"
 
 # Optional: Set the batch size for imports. Defaults to 30 if not set.
