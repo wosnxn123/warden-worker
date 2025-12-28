@@ -58,13 +58,16 @@ This page covers the two deployment paths. Pick the one that fits your workflow 
 5. **Download the frontend (Web Vault):**
 
    ```bash
-   # Get latest version tag
-   LATEST_TAG=$(curl -s https://api.github.com/repos/dani-garcia/bw_web_builds/releases/latest | jq -r .tag_name)
+   # Default pinned version (override by exporting BW_WEB_VERSION)
+   BW_WEB_VERSION="${BW_WEB_VERSION:-v2025.12.0}"
+   if [ "${BW_WEB_VERSION}" = "latest" ]; then
+     BW_WEB_VERSION="$(curl -s https://api.github.com/repos/dani-garcia/bw_web_builds/releases/latest | jq -r .tag_name)"
+   fi
 
    # Download and extract
-   wget "https://github.com/dani-garcia/bw_web_builds/releases/download/$LATEST_TAG/bw_web_${LATEST_TAG}.tar.gz"
-   tar -xzf bw_web_${LATEST_TAG}.tar.gz -C public/
-   rm bw_web_${LATEST_TAG}.tar.gz
+   wget "https://github.com/dani-garcia/bw_web_builds/releases/download/${BW_WEB_VERSION}/bw_web_${BW_WEB_VERSION}.tar.gz"
+   tar -xzf "bw_web_${BW_WEB_VERSION}.tar.gz" -C public/
+   rm "bw_web_${BW_WEB_VERSION}.tar.gz"
 
    # Remove large source maps to satisfy Cloudflare static asset per-file limits
    find public/web-vault -type f -name '*.map' -delete
@@ -114,6 +117,16 @@ Add the following secrets to your GitHub repository (`Settings > Secrets and var
 | `CLOUDFLARE_API_TOKEN` | yes | Your Cloudflare API token |
 | `CLOUDFLARE_ACCOUNT_ID` | yes | Your Cloudflare account ID |
 | `D1_DATABASE_ID` | yes | Your production D1 database ID |
+| `D1_DATABASE_ID_DEV` | no | Dev D1 database ID (required only if you use the `Deploy Dev` workflow on the `dev` branch) |
+
+### Optional Variables (Web Vault frontend version)
+
+You can pin/override the bundled Web Vault (bw_web_builds) version via GitHub Actions Variables:
+
+| Variable | Applies to | Default | Example | Notes |
+|----------|------------|---------|---------|-------|
+| `BW_WEB_VERSION` | prod (`main/uat/release*`) | `v2025.12.0` | `v2025.12.0` | Set to `latest` to follow upstream latest release |
+| `BW_WEB_VERSION_DEV` | dev (`dev`) | `v2025.12.0` | `v2025.12.0` | Set to `latest` to follow upstream latest release |
 
 > [!NOTE] The `CLOUDFLARE_API_TOKEN` must have **both** Worker and D1 permissions:
 > - **Edit Cloudflare Workers** - Required for deploying the Worker

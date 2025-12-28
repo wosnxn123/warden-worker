@@ -13,6 +13,10 @@ jobs:
             # Pin tool versions to avoid upstream updates breaking CI
             WORKER_BUILD_VERSION: "0.7.1"
             WRANGLER_VERSION: "4.54.0"
+            # Web Vault frontend (bw_web_builds) version tag (default pinned; override via GitHub Actions Variables)
+            # - Set repository variable BW_WEB_VERSION (e.g. v2025.12.0) to override
+            # - Set to "latest" to follow the latest bw_web_builds release
+            BW_WEB_VERSION: ${{ vars.BW_WEB_VERSION || 'v2025.12.0' }}
 
             # Required for wrangler
             CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -61,15 +65,19 @@ jobs:
 
             - name: Download and extract frontend (bw_web_builds)
               run: |
-                  # Get latest version tag from bw_web_builds
-                  LATEST_TAG=$(curl -s https://api.github.com/repos/dani-garcia/bw_web_builds/releases/latest | jq -r .tag_name)
-                  echo "📦 Downloading frontend version: $LATEST_TAG"
+                  set -euo pipefail
+                  TAG="${BW_WEB_VERSION}"
+                  if [ "${TAG}" = "latest" ]; then
+                    TAG="$(curl -s https://api.github.com/repos/dani-garcia/bw_web_builds/releases/latest | jq -r .tag_name)"
+                  fi
+
+                  echo "📦 Downloading frontend version: ${TAG}"
                   
                   # Download the web vault release
-                  wget -q "https://github.com/dani-garcia/bw_web_builds/releases/download/$LATEST_TAG/bw_web_${LATEST_TAG}.tar.gz"
+                  wget -q "https://github.com/dani-garcia/bw_web_builds/releases/download/${TAG}/bw_web_${TAG}.tar.gz"
                   
                   # Extract to public/web-vault
-                  tar -xzf bw_web_${LATEST_TAG}.tar.gz -C public/
+                  tar -xzf "bw_web_${TAG}.tar.gz" -C public/
                  
                   # bw_web_builds extracts into a web-vault folder (expected)
                   if [ ! -d "public/web-vault" ]; then
@@ -82,7 +90,7 @@ jobs:
                   find public/web-vault -type f -name '*.map' -delete
 
                   # Cleanup
-                  rm -f bw_web_${LATEST_TAG}.tar.gz
+                  rm -f "bw_web_${TAG}.tar.gz"
                   
                   echo "✅ Frontend files extracted to ./public/web-vault"
                   ls -la public/web-vault/ | head -20

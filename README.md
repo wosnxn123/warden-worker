@@ -66,7 +66,7 @@ It's highly recommended to deploy your own instance since the demo can hit the r
 
 ## Frontend (Web Vault)
 
-The frontend is bundled with the Worker using [Cloudflare Workers Static Assets](https://developers.cloudflare.com/workers/static-assets/). The GitHub Actions workflow automatically downloads the latest [bw_web_builds](https://github.com/dani-garcia/bw_web_builds) (Vaultwarden web vault) and deploys it together with the backend.
+The frontend is bundled with the Worker using [Cloudflare Workers Static Assets](https://developers.cloudflare.com/workers/static-assets/). The GitHub Actions workflows download a **pinned** [bw_web_builds](https://github.com/dani-garcia/bw_web_builds) (Vaultwarden web vault) release (default: `v2025.12.0`) and deploy it together with the backend. You can override it via GitHub Actions Variables (`BW_WEB_VERSION` for prod, `BW_WEB_VERSION_DEV` for dev), or set it to `latest` to follow upstream.
 
 **How it works:**
 - Static files (HTML, CSS, JS) are served directly by Cloudflare's edge network.
@@ -216,7 +216,7 @@ wrangler dev --persist
 
 **Full stack (with Web Vault):**
 
-1. Download the frontend assets (see [deployment doc](docs/.md#download-the-frontend-web-vault)).
+1. Download the frontend assets (see [deployment doc](docs/deployment.md#download-the-frontend-web-vault)).
 2. Start locally:
 
    ```bash
