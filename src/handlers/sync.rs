@@ -92,7 +92,7 @@ pub async fn get_sync_data(
     .map_err(|_| AppError::Internal)?;
 
     let response = format!(
-        r#"{{"profile":{},"folders":{},"collections":[],"policies":[],"ciphers":{},"domains":null,"sends":[],"userDecryption":{},"object":"sync"}}"#,
+        r#"{{"profile":{},"folders":{},"collections":[],"policies":[],"ciphers":{},"domains":{{"equivalentDomains":[],"globalEquivalentDomains":[],"object":"domains"}},"sends":[],"userDecryption":{},"object":"sync"}}"#,
         profile_json, folders_json, ciphers_json, user_decryption_json
     );
 

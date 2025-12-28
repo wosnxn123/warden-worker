@@ -7,7 +7,7 @@ use worker::Env;
 
 use crate::handlers::{
     accounts, attachments, ciphers, config, devices, emergency_access, folders, identity, import,
-    sync, twofactor, webauth,
+    meta, settings, sync, twofactor, webauth,
 };
 
 pub fn api_router(env: Env) -> Router {
@@ -138,6 +138,15 @@ pub fn api_router(env: Env) -> Router {
         .route("/api/folders/{id}", delete(folders::delete_folder))
         .route("/api/folders/{id}/delete", post(folders::delete_folder))
         .route("/api/config", get(config::config))
+        // Meta endpoints (mirrors a subset of vaultwarden core/mod.rs)
+        .route("/api/alive", get(meta::alive))
+        .route("/api/now", get(meta::now))
+        .route("/api/version", get(meta::version))
+        .route("/api/hibp/breach", get(meta::hibp_breach))
+        // Settings (stubbed)
+        .route("/api/settings/domains", get(settings::get_domains))
+        .route("/api/settings/domains", post(settings::post_domains))
+        .route("/api/settings/domains", put(settings::put_domains))
         // Emergency access (stub - returns empty lists, feature not supported)
         .route(
             "/api/emergency-access/trusted",
