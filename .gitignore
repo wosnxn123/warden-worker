@@ -3,7 +3,7 @@ node_modules
 .wrangler
 .env
 # Frontend files (downloaded during deployment/development)
-public/
+public/web-vault/
 
 # reference repos
 vaultwarden/

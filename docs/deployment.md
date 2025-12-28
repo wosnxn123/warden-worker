@@ -63,15 +63,17 @@ This page covers the two deployment paths. Pick the one that fits your workflow 
 
    # Download and extract
    wget "https://github.com/dani-garcia/bw_web_builds/releases/download/$LATEST_TAG/bw_web_${LATEST_TAG}.tar.gz"
-   mkdir -p public
    tar -xzf bw_web_${LATEST_TAG}.tar.gz -C public/
-
-   # Move files from web-vault subfolder
-   shopt -s dotglob
-   mv public/web-vault/* public/
-   shopt -u dotglob
-   rmdir public/web-vault
    rm bw_web_${LATEST_TAG}.tar.gz
+
+   # Remove large source maps to satisfy Cloudflare static asset per-file limits
+   find public/web-vault -type f -name '*.map' -delete
+   ```
+
+   **Optional:** Apply lightweight UI overrides to generate `public/web-vault/css/vaultwarden.css`:
+
+   ```bash
+   bash scripts/apply-web-vault-overrides.sh public/web-vault
    ```
 
 6. **Set up database and deploy the worker:**
