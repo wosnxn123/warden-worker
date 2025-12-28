@@ -11,7 +11,11 @@ use crate::{
     crypto::{ct_eq, generate_salt, hash_password_for_storage, validate_totp},
     db,
     error::AppError,
-    handlers::{allow_totp_drift, server_password_iterations},
+    handlers::{
+        allow_totp_drift,
+        server_password_iterations,
+        twofactor::{is_twofactor_enabled, list_user_twofactors},
+    },
     models::twofactor::{RememberTokenData, TwoFactor, TwoFactorType},
     models::user::User,
 };
@@ -94,6 +98,8 @@ pub struct TokenResponse {
     force_password_reset: bool,
     #[serde(rename = "UserDecryptionOptions")]
     user_decryption_options: UserDecryptionOptions,
+    #[serde(rename = "AccountKeys")]
+    account_keys: serde_json::Value,
     #[serde(rename = "TwoFactorToken", skip_serializing_if = "Option::is_none")]
     two_factor_token: Option<String>,
 }
@@ -102,6 +108,8 @@ pub struct TokenResponse {
 #[serde(rename_all = "PascalCase")]
 pub struct UserDecryptionOptions {
     pub has_master_password: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub master_password_unlock: Option<serde_json::Value>,
     pub object: String,
 }
 
@@ -151,6 +159,34 @@ fn generate_tokens_and_response(
         &EncodingKey::from_secret(jwt_refresh_secret.as_ref()),
     )?;
 
+    let has_master_password = !user.master_password_hash.is_empty();
+    let master_password_unlock = if has_master_password {
+        Some(serde_json::json!({
+            "Kdf": {
+                "KdfType": user.kdf_type,
+                "Iterations": user.kdf_iterations,
+                "Memory": user.kdf_memory,
+                "Parallelism": user.kdf_parallelism
+            },
+            // This field is named inconsistently and will be removed and replaced by the "wrapped" variant in the apps.
+            // https://github.com/bitwarden/android/blob/release/2025.12-rc41/network/src/main/kotlin/com/bitwarden/network/model/MasterPasswordUnlockDataJson.kt#L22-L26
+            "MasterKeyEncryptedUserKey": user.key,
+            "MasterKeyWrappedUserKey": user.key,
+            "Salt": user.email
+        }))
+    } else {
+        None
+    };
+
+    let account_keys = serde_json::json!({
+        "publicKeyEncryptionKeyPair": {
+            "wrappedPrivateKey": user.private_key,
+            "publicKey": user.public_key,
+            "Object": "publicKeyEncryptionKeyPair"
+        },
+        "Object": "privateKeys"
+    });
+
     Ok(Json(TokenResponse {
         access_token,
         expires_in: expires_in.num_seconds(),
@@ -165,9 +201,11 @@ fn generate_tokens_and_response(
         force_password_reset: false,
         reset_master_password: false,
         user_decryption_options: UserDecryptionOptions {
-            has_master_password: true,
+            has_master_password,
+            master_password_unlock,
             object: "userDecryptionOptions".to_string(),
         },
+        account_keys,
         two_factor_token,
     }))
 }
@@ -215,51 +253,32 @@ pub async fn token(
                 return Err(AppError::Unauthorized("Invalid credentials".to_string()));
             }
 
-            // Check for 2FA
-            let twofactors: Vec<TwoFactor> = db
-                .prepare("SELECT * FROM twofactor WHERE user_uuid = ?1 AND atype < 1000")
-                .bind(&[user.id.clone().into()])?
-                .all()
-                .await
-                .map_err(|_| AppError::Database)?
-                .results()
-                .unwrap_or_default();
+            // Check for 2FA (TOTP) for this user.
+            let twofactors: Vec<TwoFactor> = list_user_twofactors(&db, &user.id).await?;
 
             let mut two_factor_remember_token: Option<String> = None;
 
-            // Filter out Remember type - it's not a real 2FA provider, just a convenience feature
-            let real_twofactors: Vec<&TwoFactor> = twofactors
-                .iter()
-                .filter(|tf| tf.atype != TwoFactorType::Remember as i32)
-                .collect();
-
-            if !real_twofactors.is_empty() {
-                // 2FA is enabled, need to verify
-                // Only show real 2FA providers to client (not Remember)
-                let twofactor_ids: Vec<i32> = real_twofactors.iter().map(|tf| tf.atype).collect();
+            if is_twofactor_enabled(&twofactors) {
+                // Only advertise Authenticator (TOTP) as the real provider for now.
+                let twofactor_ids: Vec<i32> = vec![TwoFactorType::Authenticator as i32];
                 let selected_id = payload.two_factor_provider.unwrap_or(twofactor_ids[0]);
 
                 let twofactor_code = match &payload.two_factor_token {
                     Some(code) => code,
                     None => {
                         // Return 2FA required error
-                        return Err(AppError::TwoFactorRequired(json_err_twofactor(
-                            &twofactor_ids,
-                        )));
+                        return Err(AppError::TwoFactorRequired(json_err_twofactor(&twofactor_ids)));
                     }
                 };
 
-                // Find the selected twofactor from real_twofactors
-                let selected_twofactor = real_twofactors
-                    .iter()
-                    .find(|tf| tf.atype == selected_id && tf.enabled)
-                    .copied();
-
                 match TwoFactorType::from_i32(selected_id) {
                     Some(TwoFactorType::Authenticator) => {
-                        let tf = selected_twofactor.ok_or_else(|| {
-                            AppError::BadRequest("TOTP not configured".to_string())
-                        })?;
+                        let tf = twofactors
+                            .iter()
+                            .find(|tf| {
+                                tf.enabled && tf.atype == TwoFactorType::Authenticator as i32
+                            })
+                            .ok_or_else(|| AppError::BadRequest("TOTP not configured".to_string()))?;
 
                         // Validate TOTP code
                         let allow_drift = allow_totp_drift(&env);
@@ -283,10 +302,9 @@ pub async fn token(
                         // Remember is handled separately - client sends remember token from previous login
                         // Check remember token against stored value for this device
                         if let Some(ref device_id) = payload.device_identifier {
-                            // Find remember token in twofactors (not real_twofactors)
-                            let remember_tf = twofactors
-                                .iter()
-                                .find(|tf| tf.atype == TwoFactorType::Remember as i32);
+                            let remember_tf = twofactors.iter().find(|tf| {
+                                tf.enabled && tf.atype == TwoFactorType::Remember as i32
+                            });
 
                             if let Some(tf) = remember_tf {
                                 // Parse stored remember tokens as JSON

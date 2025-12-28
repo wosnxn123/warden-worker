@@ -70,3 +70,12 @@ pub(crate) fn allow_totp_drift(env: &worker::Env) -> bool {
         .map(|value| !matches!(value.as_str(), "1" | "true" | "yes" | "on"))
         .unwrap_or(true)
 }
+
+/// Whether the user has 2FA enabled.
+pub(crate) async fn two_factor_enabled(
+    db: &worker::D1Database,
+    user_id: &str,
+) -> Result<bool, crate::error::AppError> {
+    let twofactors = crate::handlers::twofactor::list_user_twofactors(db, user_id).await?;
+    Ok(crate::handlers::twofactor::is_twofactor_enabled(&twofactors))
+}

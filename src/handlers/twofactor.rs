@@ -16,6 +16,30 @@ use crate::{
     models::user::{PasswordOrOtpData, User},
 };
 
+/// List all 2FA records for a user (includes Remember tokens, excludes atype >= 1000).
+pub(crate) async fn list_user_twofactors(
+    db: &worker::D1Database,
+    user_id: &str,
+) -> Result<Vec<TwoFactor>, AppError> {
+    db.prepare("SELECT * FROM twofactor WHERE user_uuid = ?1 AND atype < 1000")
+        .bind(&[user_id.to_string().into()])?
+        .all()
+        .await
+        .map_err(|_| AppError::Database)?
+        .results::<TwoFactor>()
+        .map_err(|_| AppError::Database)
+}
+
+/// Whether the user has 2FA enabled.
+///
+/// For now, we intentionally only treat Authenticator (TOTP) as a real 2FA provider.
+/// Remember-device tokens are never considered a 2FA method by themselves.
+pub(crate) fn is_twofactor_enabled(twofactors: &[TwoFactor]) -> bool {
+    twofactors.iter().any(|tf| {
+        tf.enabled && tf.atype == TwoFactorType::Authenticator as i32
+    })
+}
+
 /// GET /api/two-factor - Get all enabled 2FA providers for current user
 #[worker::send]
 pub async fn get_twofactor(
@@ -24,17 +48,8 @@ pub async fn get_twofactor(
 ) -> Result<Json<Value>, AppError> {
     let db = db::get_db(&env)?;
 
-    let twofactors: Vec<Value> = db
-        .prepare("SELECT * FROM twofactor WHERE user_uuid = ?1 AND atype < 1000")
-        .bind(&[user_id.clone().into()])?
-        .all()
-        .await
-        .map_err(|_| AppError::Database)?
-        .results::<TwoFactor>()
-        .map_err(|_| AppError::Database)?
-        .iter()
-        .map(|tf| tf.to_json_provider())
-        .collect();
+    let twofactors = list_user_twofactors(&db, &user_id).await?;
+    let twofactors: Vec<Value> = twofactors.iter().map(|tf| tf.to_json_provider()).collect();
 
     Ok(Json(serde_json::json!({
         "data": twofactors,

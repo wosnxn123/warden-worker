@@ -6,7 +6,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 use worker::{query, D1PreparedStatement, Env};
 
-use super::{get_batch_size, server_password_iterations};
+use super::{get_batch_size, server_password_iterations, two_factor_enabled};
 use crate::{
     auth::Claims,
     crypto::{generate_salt, hash_password_for_storage},
@@ -331,6 +331,18 @@ pub async fn revision_date(
     Ok(Json(revision_date))
 }
 
+/// GET /api/accounts/tasks
+///
+/// Vaultwarden returns an empty list here; some official clients call this endpoint.
+/// We don't implement task workflows, so always return an empty list.
+#[worker::send]
+pub async fn get_tasks() -> Result<Json<Value>, AppError> {
+    Ok(Json(json!({
+        "data": [],
+        "object": "list"
+    })))
+}
+
 #[worker::send]
 pub async fn get_profile(
     claims: Claims,
@@ -341,12 +353,13 @@ pub async fn get_profile(
 
     let user: User = db
         .prepare("SELECT * FROM users WHERE id = ?1")
-        .bind(&[user_id.into()])?
+        .bind(&[user_id.clone().into()])?
         .first(None)
         .await?
         .ok_or_else(|| AppError::NotFound("User not found".to_string()))?;
 
-    let profile = Profile::from_user(user)?;
+    let two_factor_enabled = two_factor_enabled(&db, &user_id).await?;
+    let profile = Profile::from_user(user, two_factor_enabled)?;
 
     Ok(Json(profile))
 }
@@ -392,7 +405,8 @@ pub async fn post_profile(
     .await
     .map_err(|_| AppError::Database)?;
 
-    let profile = Profile::from_user(user)?;
+    let two_factor_enabled = two_factor_enabled(&db, user_id).await?;
+    let profile = Profile::from_user(user, two_factor_enabled)?;
 
     Ok(Json(profile))
 }
@@ -450,7 +464,8 @@ pub async fn put_avatar(
     .await
     .map_err(|_| AppError::Database)?;
 
-    let profile = Profile::from_user(user)?;
+    let two_factor_enabled = two_factor_enabled(&db, user_id).await?;
+    let profile = Profile::from_user(user, two_factor_enabled)?;
 
     Ok(Json(profile))
 }
