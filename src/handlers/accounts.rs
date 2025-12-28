@@ -343,6 +343,29 @@ pub async fn get_tasks() -> Result<Json<Value>, AppError> {
     })))
 }
 
+/// GET /api/auth-requests
+///
+/// Bitwarden clients may call this to fetch pending "login with device" auth requests.
+/// This minimal implementation doesn't support device auth requests, so we always return an empty list.
+///
+/// Vaultwarden currently aliases this endpoint to `/api/auth-requests/pending`.
+#[worker::send]
+pub async fn get_auth_requests(claims: Claims) -> Result<Json<Value>, AppError> {
+    get_auth_requests_pending(claims).await
+}
+
+/// GET /api/auth-requests/pending
+///
+/// Stub: always returns an empty list.
+#[worker::send]
+pub async fn get_auth_requests_pending(_claims: Claims) -> Result<Json<Value>, AppError> {
+    Ok(Json(json!({
+        "data": [],
+        "continuationToken": null,
+        "object": "list"
+    })))
+}
+
 #[worker::send]
 pub async fn get_profile(
     claims: Claims,

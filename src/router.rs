@@ -47,6 +47,12 @@ pub fn api_router(env: Env) -> Router {
             "/api/accounts/key-management/rotate-user-account-keys",
             post(accounts::post_rotatekey),
         )
+        // Auth requests (login with device) - stub to prevent client 404s
+        .route("/api/auth-requests", get(accounts::get_auth_requests))
+        .route(
+            "/api/auth-requests/pending",
+            get(accounts::get_auth_requests_pending),
+        )
         // Ciphers CRUD
         .route("/api/ciphers", get(ciphers::list_ciphers))
         .route("/api/ciphers", post(ciphers::create_cipher_simple))
