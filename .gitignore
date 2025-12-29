@@ -8,3 +8,6 @@ public/web-vault/
 # reference repos
 vaultwarden/
 bw_web_builds/
+
+# Generated seed SQL (global equivalent domains)
+sql/global_domains_seed.sql

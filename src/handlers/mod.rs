@@ -3,13 +3,13 @@ pub mod attachments;
 pub mod ciphers;
 pub mod config;
 pub mod devices;
+pub mod domains;
 pub mod emergency_access;
 pub mod folders;
 pub mod identity;
 pub mod import;
 pub mod meta;
 pub mod purge;
-pub mod settings;
 pub mod sync;
 pub mod twofactor;
 pub mod webauth;
@@ -79,5 +79,7 @@ pub(crate) async fn two_factor_enabled(
     user_id: &str,
 ) -> Result<bool, crate::error::AppError> {
     let twofactors = crate::handlers::twofactor::list_user_twofactors(db, user_id).await?;
-    Ok(crate::handlers::twofactor::is_twofactor_enabled(&twofactors))
+    Ok(crate::handlers::twofactor::is_twofactor_enabled(
+        &twofactors,
+    ))
 }

@@ -3,6 +3,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::{crypto::verify_password, error::AppError};
 
+fn default_json_array_string() -> String {
+    "[]".to_string()
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct User {
     pub id: String,
@@ -23,6 +27,12 @@ pub struct User {
     pub kdf_memory: Option<i32>, // Argon2 memory parameter (15-1024 MB)
     pub kdf_parallelism: Option<i32>, // Argon2 parallelism parameter (1-16)
     pub security_stamp: String,
+    /// JSON string of `Vec<Vec<String>>` storing user-defined equivalent domain groups.
+    #[serde(default = "default_json_array_string")]
+    pub equivalent_domains: String,
+    /// JSON string of `Vec<i32>` storing excluded global group IDs (reserved for future global groups).
+    #[serde(default = "default_json_array_string")]
+    pub excluded_globals: String,
     pub totp_recover: Option<String>, // Recovery code for 2FA
     pub created_at: String,
     pub updated_at: String,

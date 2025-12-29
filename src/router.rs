@@ -6,8 +6,8 @@ use std::sync::Arc;
 use worker::Env;
 
 use crate::handlers::{
-    accounts, attachments, ciphers, config, devices, emergency_access, folders, identity, import,
-    meta, settings, sync, twofactor, webauth,
+    accounts, attachments, ciphers, config, devices, domains, emergency_access, folders, identity, import,
+    meta, sync, twofactor, webauth,
 };
 
 pub fn api_router(env: Env) -> Router {
@@ -144,9 +144,9 @@ pub fn api_router(env: Env) -> Router {
         .route("/api/version", get(meta::version))
         .route("/api/hibp/breach", get(meta::hibp_breach))
         // Settings (stubbed)
-        .route("/api/settings/domains", get(settings::get_domains))
-        .route("/api/settings/domains", post(settings::post_domains))
-        .route("/api/settings/domains", put(settings::put_domains))
+        .route("/api/settings/domains", get(domains::get_domains))
+        .route("/api/settings/domains", post(domains::post_domains))
+        .route("/api/settings/domains", put(domains::put_domains))
         // Emergency access (stub - returns empty lists, feature not supported)
         .route(
             "/api/emergency-access/trusted",

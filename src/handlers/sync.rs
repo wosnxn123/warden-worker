@@ -1,4 +1,4 @@
-use axum::extract::State;
+use axum::extract::{Query, State};
 use std::sync::Arc;
 use worker::Env;
 
@@ -6,7 +6,7 @@ use crate::{
     auth::Claims,
     db,
     error::AppError,
-    handlers::{attachments, ciphers, two_factor_enabled},
+    handlers::{attachments, ciphers, domains, two_factor_enabled},
     models::{
         folder::{Folder, FolderResponse},
         sync::Profile,
@@ -15,12 +15,21 @@ use crate::{
 };
 
 use ciphers::RawJson;
+use serde::Deserialize;
 use serde_json::{json, Value};
+
+#[derive(Debug, Deserialize)]
+pub struct SyncQuery {
+    /// If true, omit domains data from sync (vaultwarden sets domains to null).
+    #[serde(rename = "excludeDomains", default)]
+    pub exclude_domains: bool,
+}
 
 #[worker::send]
 pub async fn get_sync_data(
     claims: Claims,
     State(env): State<Arc<Env>>,
+    Query(query): Query<SyncQuery>,
 ) -> Result<RawJson, AppError> {
     let user_id = claims.sub;
     let db = db::get_db(&env)?;
@@ -36,6 +45,8 @@ pub async fn get_sync_data(
     let two_factor_enabled = two_factor_enabled(&db, &user_id).await?;
 
     let has_master_password = !user.master_password_hash.is_empty();
+    let equivalent_domains = user.equivalent_domains.clone();
+    let excluded_globals = user.excluded_globals.clone();
     let master_password_unlock = if has_master_password {
         // Mirrors vaultwarden's `ciphers::sync` casing (lower camelCase).
         // We don't support SSO, so this is always derived from the current user record.
@@ -91,10 +102,26 @@ pub async fn get_sync_data(
     }))
     .map_err(|_| AppError::Internal)?;
 
-    let response = format!(
-        r#"{{"profile":{},"folders":{},"collections":[],"policies":[],"ciphers":{},"domains":{{"equivalentDomains":[],"globalEquivalentDomains":[],"object":"domains"}},"sends":[],"userDecryption":{},"object":"sync"}}"#,
-        profile_json, folders_json, ciphers_json, user_decryption_json
-    );
+    let response = if query.exclude_domains {
+        format!(
+            r#"{{"profile":{},"folders":{},"collections":[],"policies":[],"ciphers":{},"sends":[],"userDecryption":{},"object":"sync"}}"#,
+            profile_json, folders_json, ciphers_json, user_decryption_json
+        )
+    } else {
+        // Match vaultwarden sync semantics:
+        // - mark excluded in /api/settings/domains
+        // - filter excluded out of sync payload
+        let global_equivalent_domains =
+            domains::global_equivalent_domains_json(&db, &excluded_globals, false).await;
+        let domains_json = format!(
+            r#"{{"equivalentDomains":{},"globalEquivalentDomains":{},"object":"domains"}}"#,
+            equivalent_domains, global_equivalent_domains
+        );
+        format!(
+            r#"{{"profile":{},"folders":{},"collections":[],"policies":[],"ciphers":{},"domains":{},"sends":[],"userDecryption":{},"object":"sync"}}"#,
+            profile_json, folders_json, ciphers_json, domains_json, user_decryption_json
+        )
+    };
 
     Ok(RawJson(response))
 }
