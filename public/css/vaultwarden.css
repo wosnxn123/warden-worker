@@ -9,11 +9,6 @@
   - After CI/CD or local download of bw_web_builds and extraction, keep `public/web-vault/` as the static resource root directory.
   - Run: `bash scripts/apply-web-vault-overrides.sh public/web-vault`
     which will copy this file (public/css/vaultwarden.css) to `public/web-vault/css/vaultwarden.css`.
-
-  Switch description (build-time):
-  - Registration button hiding: The script decides whether to append CSS hiding registration entries based on the environment variable `DISABLE_USER_REGISTRATION`
-    (hidden by default; only not hidden when "false"),
-    consistent with backend `src/handlers/config.rs` logic.
 */
 
 /* Hide unsupported UI elements */
@@ -47,8 +42,16 @@ app-security > app-two-factor-setup > form,
 app-user-layout app-danger-zone button:nth-child(1),
 
 /* Two-factor providers (hide unsupported ones; keep authenticator/TOTP visible) */
+/* Email */
 .providers-2fa-1,
+
+/* Duo */
+.providers-2fa-2,
+
+/* YubiKey */
 .providers-2fa-3,
+
+/* WebAuthn */
 .providers-2fa-7,
 
 /* Emergency access & Sends (not supported) */

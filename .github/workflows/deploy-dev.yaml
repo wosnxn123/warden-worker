@@ -86,9 +86,6 @@ jobs:
                   ls -la public/web-vault/ | head -20
 
             - name: Apply web vault overrides (vaultwarden.css)
-              env:
-                  # Optional: control build-time UI tweaks (defaults to hiding signup unless explicitly set to "false")
-                  DISABLE_USER_REGISTRATION: ${{ vars.DISABLE_USER_REGISTRATION_DEV }}
               run: |
                   bash scripts/apply-web-vault-overrides.sh public/web-vault
 

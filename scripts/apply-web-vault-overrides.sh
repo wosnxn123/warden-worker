@@ -21,22 +21,4 @@ fi
 mkdir -p "$(dirname "${DST_CSS}")"
 cp "${SRC_CSS}" "${DST_CSS}"
 
-# Keep behavior consistent with backend src/handlers/config.rs:
-# - Defaults to true if not set
-# - Only "false" disables it
-disable_user_registration="${DISABLE_USER_REGISTRATION:-}"
-disable_user_registration="$(printf '%s' "${disable_user_registration}" | tr '[:upper:]' '[:lower:]')"
-
-if [[ -z "${disable_user_registration}" || "${disable_user_registration}" != "false" ]]; then
-  cat >> "${DST_CSS}" <<'EOF'
-
-/* Build-time option: hide signup/register UI when DISABLE_USER_REGISTRATION != "false" */
-app-root a[routerlink="/signup"],
-app-login form div + div + div + div + hr,
-app-login form div + div + div + div + hr + p {
-  display: none !important;
-}
-EOF
-fi
-
 echo "✅ Installed override CSS: ${DST_CSS}"
