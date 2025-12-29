@@ -114,10 +114,10 @@ jobs:
           WRANGLER="npx --yes wrangler@${WRANGLER_VERSION}"
 
           TABLE_COUNT=$($WRANGLER d1 execute vault1 --env dev --remote --command \
-            "SELECT COUNT(*) AS cnt FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT IN ('_cf_METADATA','d1_migrations');" \
+            "SELECT COUNT(*) AS cnt FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%' AND name NOT IN ('d1_migrations');" \
             --json | jq -r '.[0].results[0].cnt // 0')
 
-          echo "Existing user table count: ${TABLE_COUNT}"
+          echo "Existing app table count: ${TABLE_COUNT}"
           if [ "${TABLE_COUNT}" = "0" ]; then
             echo "🆕 Empty D1 database detected; applying sql/schema.sql..."
             $WRANGLER d1 execute vault1 --env dev --remote --file sql/schema.sql
