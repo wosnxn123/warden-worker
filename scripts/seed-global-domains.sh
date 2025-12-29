@@ -11,13 +11,16 @@ This:
 3) Executes it against a D1 database via wrangler
 
 Usage:
-  ./scripts/seed-global-domains.sh --db <d1_name> [--env <wrangler_env>] [--remote] [--url <raw_json_url>]
+  ./scripts/seed-global-domains.sh --db <d1_name> [--env <wrangler_env>] [--remote] [--url <raw_json_url>] [--wrangler-version <ver>]
 
 Examples:
   ./scripts/seed-global-domains.sh --db vault1 --remote
   ./scripts/seed-global-domains.sh --db vault1 --env dev --remote
   ./scripts/seed-global-domains.sh --db vault1 --remote \
     --url https://raw.githubusercontent.com/dani-garcia/vaultwarden/<tag-or-commit>/src/static/global_domains.json
+
+  # Use a pinned Wrangler version via npx (recommended for CI)
+  ./scripts/seed-global-domains.sh --db vault1 --remote --wrangler-version 4.54.0
 EOF
 }
 
@@ -27,6 +30,7 @@ REMOTE=0
 URL=""
 INPUT=""
 OUTPUT="sql/global_domains_seed.sql"
+WRANGLER_VERSION=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -42,6 +46,8 @@ while [[ $# -gt 0 ]]; do
       INPUT="${2:-}"; shift 2;;
     --output)
       OUTPUT="${2:-}"; shift 2;;
+    --wrangler-version)
+      WRANGLER_VERSION="${2:-}"; shift 2;;
     -h|--help)
       usage; exit 0;;
     *)
@@ -74,6 +80,12 @@ if [[ "$REMOTE" -eq 1 ]]; then
   WRANGLER_ARGS+=(--remote)
 fi
 
-wrangler "${WRANGLER_ARGS[@]}"
+WRANGLER=(wrangler)
+if [[ -n "$WRANGLER_VERSION" ]]; then
+  WRANGLER=(npx --yes "wrangler@${WRANGLER_VERSION}")
+elif ! command -v wrangler >/dev/null 2>&1; then
+  WRANGLER=(npx --yes wrangler)
+fi
 
+"${WRANGLER[@]}" "${WRANGLER_ARGS[@]}"
 

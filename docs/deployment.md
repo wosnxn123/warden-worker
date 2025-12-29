@@ -87,6 +87,10 @@ This page covers the two deployment paths. Pick the one that fits your workflow 
    # For migrations
    wrangler d1 migrations apply vault1 --remote
 
+   # (Optional) Seed global equivalent domains into D1
+   # This downloads Vaultwarden's global_domains.json by default.
+   bash scripts/seed-global-domains.sh --db vault1 --remote
+   
    wrangler deploy
    ```
 
@@ -119,7 +123,9 @@ Add the following secrets to your GitHub repository (`Settings > Secrets and var
 | `D1_DATABASE_ID` | yes | Your production D1 database ID |
 | `D1_DATABASE_ID_DEV` | no | Dev D1 database ID (required only if you use the `Deploy Dev` workflow on the `dev` branch) |
 
-### Optional Variables (Web Vault frontend version)
+### Optional Variables
+
+#### Web Vault frontend version
 
 You can pin/override the bundled Web Vault (bw_web_builds) version via GitHub Actions Variables:
 
@@ -127,6 +133,20 @@ You can pin/override the bundled Web Vault (bw_web_builds) version via GitHub Ac
 |----------|------------|---------|---------|-------|
 | `BW_WEB_VERSION` | prod (`main/uat/release*`) | `v2025.12.0` | `v2025.12.0` | Set to `latest` to follow upstream latest release |
 | `BW_WEB_VERSION_DEV` | dev (`dev`) | `v2025.12.0` | `v2025.12.0` | Set to `latest` to follow upstream latest release |
+
+#### Global Equivalent Domains
+
+Bitwarden clients use `globalEquivalentDomains` for URI matching across well-known domain groups.
+
+To avoid bundling a large JSON file into the Worker, the dataset can be stored in D1 and seeded during deploy.
+
+| Variable | Applies to | Default | Example | Notes |
+|----------|------------|---------|---------|-------|
+| `SEED_GLOBAL_DOMAINS` | prod + dev | `true` | `false` | Set to `false` to skip seeding (API returns empty list) |
+| `GLOBAL_DOMAINS_URL` | prod | (empty) | raw GitHub URL | Optional: pin a specific Vaultwarden tag/commit for reproducible deploys |
+| `GLOBAL_DOMAINS_URL_DEV` | dev | (empty) | raw GitHub URL | Same as prod, but for dev workflow |
+
+If you skip seeding, `/api/settings/domains` and `/api/sync` will return `globalEquivalentDomains: []`.
 
 > [!NOTE] The `CLOUDFLARE_API_TOKEN` must have **both** Worker and D1 permissions:
 > - **Edit Cloudflare Workers** - Required for deploying the Worker

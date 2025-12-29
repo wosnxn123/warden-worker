@@ -198,6 +198,7 @@ The worker runs a scheduled task to clean up soft-deleted items. By default, it 
 
 - **Backup & restore:** See [Database Backup & Restore](docs/db-backup-recovery.md#github-actions-backups) for automated backups and manual restoration steps.
 - **Time Travel:** See [D1 Time Travel](docs/db-backup-recovery.md#d1-time-travel-point-in-time-recovery) to restore to a point in time.
+- **Seeding Global Equivalent Domains (optional):** See [docs/deployment.md](docs/deployment.md) for seeding in CLI deploy and CI/CD.
 - **Local dev with D1:**
   - Quick start: `wrangler dev --persist`
   - Full stack (with web vault): download frontend assets as in deployment doc, then `wrangler dev --persist`

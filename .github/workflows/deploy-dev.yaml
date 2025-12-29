@@ -164,6 +164,23 @@ jobs:
                   echo "❌ Max retries ($MAX_RETRIES) exceeded"
                   exit 1
 
+            - name: Seed global equivalent domains (dev, optional)
+              env:
+                  SEED_GLOBAL_DOMAINS: ${{ vars.SEED_GLOBAL_DOMAINS || 'true' }}
+                  GLOBAL_DOMAINS_URL_DEV: ${{ vars.GLOBAL_DOMAINS_URL_DEV }}
+              run: |
+                  set -euo pipefail
+                  if [ "${SEED_GLOBAL_DOMAINS}" = "false" ]; then
+                    echo "⏭️ SEED_GLOBAL_DOMAINS=false, skipping"
+                    exit 0
+                  fi
+
+                  if [ -n "${GLOBAL_DOMAINS_URL_DEV:-}" ]; then
+                    bash scripts/seed-global-domains.sh --db vault1 --env dev --remote --wrangler-version "${WRANGLER_VERSION}" --url "${GLOBAL_DOMAINS_URL_DEV}"
+                  else
+                    bash scripts/seed-global-domains.sh --db vault1 --env dev --remote --wrangler-version "${WRANGLER_VERSION}"
+                  fi
+
             - uses: cloudflare/wrangler-action@v3
               id: cf
               with:
