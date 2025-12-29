@@ -146,6 +146,7 @@ function parseDownloadPath(path) {
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
+    const method = (request.method || "GET").toUpperCase();
 
     // Optional: route selected CPU-heavy endpoints to Durable Objects.
     // This keeps the main Worker on a low-CPU path while allowing heavy work to complete.
@@ -153,10 +154,7 @@ export default {
       // Token endpoint:
       // - password grant is CPU-heavy (password verification) => offload
       // - refresh_token grant is lightweight (JWT HS256 verify) => keep in Worker/WASM
-      if (
-        url.pathname === "/identity/connect/token" &&
-        (request.method || "GET").toUpperCase() === "POST"
-      ) {
+      if (url.pathname === "/identity/connect/token" && method === "POST") {
         const body = await request.clone().text();
         const params = new URLSearchParams(body);
         const grantType = params.get("grant_type");
@@ -167,9 +165,7 @@ export default {
           const stub = env.HEAVY_DO.get(id);
           return stub.fetch(request, { body });
         }
-      }
-
-      if (shouldOffloadToHeavyDo(request, url)) {
+      } else if (shouldOffloadToHeavyDo(request, url)) {
         const shardKey = await getHeavyDoShardKey(request, url);
         const name = shardKey ? `user:${shardKey}` : "user:default";
         const id = env.HEAVY_DO.idFromName(name);
@@ -179,7 +175,7 @@ export default {
     }
 
     // Attachment upload/download fast-path (R2 zero-copy streaming + JWT validation)
-    if (request.method === "PUT") {
+    if (method === "PUT") {
       const parsed = parseAzureUploadPath(url.pathname);
       if (parsed) {
         const token = url.searchParams.get("token");
@@ -190,16 +186,14 @@ export default {
           );
         }
         return handleAzureUpload(
-            request,
-            env,
-            parsed.cipherId,
-            parsed.attachmentId,
-            token
-          );
+          request,
+          env,
+          parsed.cipherId,
+          parsed.attachmentId,
+          token
+        );
       }
-    }
-
-    if (request.method === "GET") {
+    } else if (method === "GET") {
       const parsed = parseDownloadPath(url.pathname);
       if (parsed) {
         const token = url.searchParams.get("token");
