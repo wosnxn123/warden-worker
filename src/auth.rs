@@ -2,18 +2,21 @@ use axum::{
     extract::FromRequestParts,
     http::{header, request::Parts},
 };
+use constant_time_eq::constant_time_eq;
 use jsonwebtoken::{decode, DecodingKey, Validation};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use worker::Env;
 
+use crate::db;
 use crate::error::AppError;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Claims {
-    pub sub: String, // User ID
-    pub exp: usize,  // Expiration time
-    pub nbf: usize,  // Not before time
+    pub sub: String,    // User ID
+    pub exp: usize,     // Expiration time
+    pub nbf: usize,     // Not before time
+    pub sstamp: String, // Security stamp
 
     pub premium: bool,
     pub name: String,
@@ -31,7 +34,7 @@ pub struct AuthUser(
 
 impl FromRequestParts<Arc<Env>> for Claims {
     type Rejection = AppError;
-
+    #[worker::send]
     async fn from_request_parts(
         parts: &mut Parts,
         state: &Arc<Env>,
@@ -55,7 +58,22 @@ impl FromRequestParts<Arc<Env>> for Claims {
         let token_data = decode::<Claims>(&token, &decoding_key, &Validation::default())
             .map_err(|_| AppError::Unauthorized("Invalid token".to_string()))?;
 
-        Ok(token_data.claims)
+        let claims = token_data.claims;
+
+        let db = db::get_db(state)?;
+        let current_sstamp = db
+            .prepare("SELECT security_stamp FROM users WHERE id = ?1")
+            .bind(&[claims.sub.clone().into()])?
+            .first::<String>(Some("security_stamp"))
+            .await
+            .map_err(|_| AppError::Database)?
+            .ok_or_else(|| AppError::Unauthorized("Invalid token".to_string()))?;
+
+        if !constant_time_eq(claims.sstamp.as_bytes(), current_sstamp.as_bytes()) {
+            return Err(AppError::Unauthorized("Invalid token".to_string()));
+        }
+
+        Ok(claims)
     }
 }
 

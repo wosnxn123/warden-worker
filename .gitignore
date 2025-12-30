@@ -11,3 +11,7 @@ bw_web_builds/
 
 # Generated seed SQL (global equivalent domains)
 sql/global_domains_seed.sql
+
+# Coding assistant
+.codex/
+.claude/

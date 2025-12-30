@@ -1,5 +1,6 @@
 use axum::{extract::State, Form, Json};
 use chrono::{Duration, Utc};
+use constant_time_eq::constant_time_eq;
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
@@ -112,6 +113,19 @@ pub struct UserDecryptionOptions {
     pub object: String,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+struct RefreshClaims {
+    pub sub: String, // User ID
+    pub exp: usize,  // Expiration time
+    pub nbf: usize,  // Not before time
+
+    // NOTE: We intentionally do NOT implement refresh token rotation / replay detection here.
+    // Vaultwarden's default auth flow also doesn't do rotation/reuse detection; in this project we
+    // currently avoid device/session management. If we later add minimal device state, we can add
+    // refresh token rotation (jti/family) + reuse detection on top.
+    pub sstamp: String,
+}
+
 fn generate_tokens_and_response(
     user: User,
     env: &Arc<Env>,
@@ -125,6 +139,7 @@ fn generate_tokens_and_response(
         sub: user.id.clone(),
         exp,
         nbf: now.timestamp() as usize,
+        sstamp: user.security_stamp.clone(),
         premium: true,
         name: user.name.clone().unwrap_or_else(|| "User".to_string()),
         email: user.email.clone(),
@@ -141,15 +156,11 @@ fn generate_tokens_and_response(
 
     let refresh_expires_in = Duration::days(30);
     let refresh_exp = (now + refresh_expires_in).timestamp() as usize;
-    let refresh_claims = Claims {
-        sub: user.id.clone(),
+    let refresh_claims = RefreshClaims {
+        sub: user.id,
         exp: refresh_exp,
         nbf: now.timestamp() as usize,
-        premium: true,
-        name: user.name.unwrap_or_else(|| "User".to_string()),
-        email: user.email.clone(),
-        email_verified: true,
-        amr: vec!["Application".into()],
+        sstamp: user.security_stamp,
     };
     let jwt_refresh_secret = env.secret("JWT_REFRESH_SECRET")?.to_string();
     let refresh_token = encode(
@@ -480,7 +491,7 @@ pub async fn token(
                 .ok_or_else(|| AppError::BadRequest("Missing refresh_token".to_string()))?;
 
             let jwt_refresh_secret = env.secret("JWT_REFRESH_SECRET")?.to_string();
-            let token_data = decode::<Claims>(
+            let token_data = decode::<RefreshClaims>(
                 &refresh_token,
                 &DecodingKey::from_secret(jwt_refresh_secret.as_ref()),
                 &Validation::default(),
@@ -496,6 +507,13 @@ pub async fn token(
                 .map_err(|_| AppError::Unauthorized("Invalid user".to_string()))?
                 .ok_or_else(|| AppError::Unauthorized("Invalid user".to_string()))?;
             let user: User = serde_json::from_value(user).map_err(|_| AppError::Internal)?;
+
+            if !constant_time_eq(
+                token_data.claims.sstamp.as_bytes(),
+                user.security_stamp.as_bytes(),
+            ) {
+                return Err(AppError::Unauthorized("Invalid refresh token".to_string()));
+            }
 
             generate_tokens_and_response(user, &env, None)
         }
