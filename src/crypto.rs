@@ -252,10 +252,7 @@ pub async fn validate_totp(
         }
     }
 
-    Err(AppError::Unauthorized(format!(
-        "Invalid TOTP code. Server time: {}",
-        chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
-    )))
+    Err(AppError::Unauthorized("Invalid TOTP code.".to_string()))
 }
 
 /// Generates a recovery code (20 characters, Base32 encoded).
