@@ -3,13 +3,16 @@ use axum::{
     http::{header, request::Parts},
 };
 use constant_time_eq::constant_time_eq;
-use jsonwebtoken::{decode, DecodingKey, Validation};
+use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::sync::Arc;
 use worker::Env;
 
 use crate::db;
 use crate::error::AppError;
+
+pub(crate) const JWT_VALIDATION_LEEWAY_SECS: u64 = 60;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Claims {
@@ -23,6 +26,19 @@ pub struct Claims {
     pub email: String,
     pub email_verified: bool,
     pub amr: Vec<String>,
+}
+
+pub(crate) fn jwt_validation() -> Validation {
+    let mut required_spec_claims = HashSet::new();
+    required_spec_claims.insert("exp".to_string());
+
+    let mut validation = Validation::new(Algorithm::HS256);
+    validation.required_spec_claims = required_spec_claims;
+    validation.leeway = JWT_VALIDATION_LEEWAY_SECS;
+    validation.validate_exp = true;
+    validation.validate_nbf = true;
+    validation.algorithms = vec![Algorithm::HS256];
+    validation
 }
 
 /// AuthUser extractor - provides (user_id, email) tuple
@@ -55,7 +71,7 @@ impl FromRequestParts<Arc<Env>> for Claims {
 
         // Decode and validate the token
         let decoding_key = DecodingKey::from_secret(secret.to_string().as_ref());
-        let token_data = decode::<Claims>(&token, &decoding_key, &Validation::default())
+        let token_data = decode::<Claims>(&token, &decoding_key, &jwt_validation())
             .map_err(|_| AppError::Unauthorized("Invalid token".to_string()))?;
 
         let claims = token_data.claims;

@@ -186,7 +186,7 @@ Configure environment variables in `wrangler.toml` under `[vars]`, or set them v
 * **`ATTACHMENT_TOTAL_LIMIT_KB`** (Optional): 
   - Max total attachment storage per user in KB. 
   - Example: `1048576` for 1GB.
-* **`ATTACHMENT_TTL_SECS`** (Optional, Default: `300`): 
+* **`ATTACHMENT_TTL_SECS`** (Optional, Default: `300`, Minimum: `60`): 
   - TTL for attachment upload/download URLs.
 
 ### Scheduled Tasks (Cron)

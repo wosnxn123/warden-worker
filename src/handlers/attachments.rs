@@ -14,7 +14,7 @@ use uuid::Uuid;
 use worker::{query, wasm_bindgen::JsValue, Bucket, D1Database, Env, HttpMetadata};
 
 use crate::{
-    auth::Claims,
+    auth::{Claims, JWT_VALIDATION_LEEWAY_SECS},
     db,
     error::AppError,
     models::{
@@ -560,7 +560,7 @@ fn download_url(
     attachment_id: &str,
     user_id: &str,
 ) -> Result<String, AppError> {
-    let token = build_download_token(env, user_id, cipher_id, attachment_id)?;
+    let token = build_upload_download_token(env, user_id, cipher_id, attachment_id)?;
     let normalized_base = base_url.trim_end_matches('/');
     Ok(format!(
         "{normalized_base}/api/ciphers/{cipher_id}/attachment/{attachment_id}/download?token={token}"
@@ -734,7 +734,7 @@ fn validate_size_within_declared(
     Ok(())
 }
 
-fn build_download_token(
+fn build_upload_download_token(
     env: &Env,
     user_id: &str,
     cipher_id: &str,
@@ -744,6 +744,7 @@ fn build_download_token(
     let now = Utc::now().timestamp();
     let exp = now
         .checked_add(ttl_secs)
+        .and_then(|exp| exp.checked_sub(JWT_VALIDATION_LEEWAY_SECS as i64))
         .ok_or_else(|| AppError::Internal)?;
 
     if exp < 0 {
@@ -778,7 +779,7 @@ fn upload_url(
     attachment_id: &str,
     user_id: &str,
 ) -> Result<String, AppError> {
-    let token = build_download_token(env, user_id, cipher_id, attachment_id)?;
+    let token = build_upload_download_token(env, user_id, cipher_id, attachment_id)?;
     let normalized_base = base_url.trim_end_matches('/');
     Ok(format!(
         "{normalized_base}/api/ciphers/{cipher_id}/attachment/{attachment_id}/azure-upload?token={token}"

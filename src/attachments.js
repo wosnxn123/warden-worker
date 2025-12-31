@@ -9,6 +9,8 @@
  * Route matching and URL parsing should be handled by `src/entry.js`.
  */
 
+const JWT_EXPECTED_ALG = "HS256";
+const JWT_VALIDATION_LEEWAY_SECS = 60;
 // JWT validation using Web Crypto API (no external dependencies)
 async function verifyJwt(token, secret) {
   const encoder = new TextEncoder();
@@ -18,6 +20,17 @@ async function verifyJwt(token, secret) {
   }
 
   const [headerB64, payloadB64, signatureB64] = parts;
+
+  let header;
+  try {
+    header = JSON.parse(new TextDecoder().decode(base64UrlDecode(headerB64)));
+  } catch {
+    throw new Error("Invalid token header");
+  }
+
+  if (!header || typeof header !== "object" || header.alg !== JWT_EXPECTED_ALG) {
+    throw new Error("Invalid token algorithm");
+  }
 
   // Import the secret key for HMAC-SHA256
   const key = await crypto.subtle.importKey(
@@ -40,12 +53,23 @@ async function verifyJwt(token, secret) {
   }
 
   // Decode and parse the payload
-  const payload = JSON.parse(
-    new TextDecoder().decode(base64UrlDecode(payloadB64))
-  );
+  let payload;
+  try {
+    payload = JSON.parse(new TextDecoder().decode(base64UrlDecode(payloadB64)));
+  } catch {
+    throw new Error("Invalid token payload");
+  }
 
-  // Check expiration
-  if (payload.exp && payload.exp < Math.floor(Date.now() / 1000)) {
+  if (!payload || typeof payload !== "object") {
+    throw new Error("Invalid token payload");
+  }
+  
+  if (typeof payload.exp !== "number") {
+    throw new Error("Invalid token exp");
+  }
+  
+  const now = Math.floor(Date.now() / 1000);
+  if (payload.exp < now - JWT_VALIDATION_LEEWAY_SECS) {
     throw new Error("Token expired");
   }
 
@@ -442,5 +466,3 @@ export async function handleDownload(request, env, cipherId, attachmentId, token
     headers,
   });
 }
-
-

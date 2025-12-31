@@ -1,14 +1,14 @@
 use axum::{extract::State, Form, Json};
 use chrono::{Duration, Utc};
 use constant_time_eq::constant_time_eq;
-use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
+use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 use std::sync::Arc;
 use worker::{query, Env};
 
 use crate::{
-    auth::Claims,
+    auth::{jwt_validation, Claims},
     crypto::{ct_eq, generate_salt, hash_password_for_storage, validate_totp},
     db,
     error::AppError,
@@ -494,7 +494,7 @@ pub async fn token(
             let token_data = decode::<RefreshClaims>(
                 &refresh_token,
                 &DecodingKey::from_secret(jwt_refresh_secret.as_ref()),
-                &Validation::default(),
+                &jwt_validation(),
             )
             .map_err(|_| AppError::Unauthorized("Invalid refresh token".to_string()))?;
 
