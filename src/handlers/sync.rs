@@ -6,7 +6,7 @@ use crate::{
     auth::Claims,
     db,
     error::AppError,
-    handlers::{attachments, ciphers, domains, two_factor_enabled},
+    handlers::{attachments, ciphers, ciphers_default_row_query, domains, two_factor_enabled},
     models::{
         folder::{Folder, FolderResponse},
         sync::Profile,
@@ -79,12 +79,14 @@ pub async fn get_sync_data(
 
     // Fetch ciphers as raw JSON array string (no parsing in Rust!)
     let include_attachments = attachments::attachments_enabled(env.as_ref());
+    let force_row_query = ciphers_default_row_query(env.as_ref());
     let ciphers_json = ciphers::fetch_cipher_json_array_raw(
         &db,
         include_attachments,
         "WHERE c.user_id = ?1",
         &[user_id.clone().into()],
         "",
+        force_row_query,
     )
     .await?;
 

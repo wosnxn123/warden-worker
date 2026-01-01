@@ -73,6 +73,18 @@ pub(crate) fn allow_totp_drift(env: &worker::Env) -> bool {
         .unwrap_or(true)
 }
 
+/// Whether to prefer fetching cipher JSON rows and building arrays in the Worker.
+///
+/// This avoids D1/SQLite `SQLITE_TOOBIG` errors when using `json_group_array` on large vaults.
+/// Defaults to false (try the single-query aggregation, then fallback on `SQLITE_TOOBIG`).
+pub(crate) fn ciphers_default_row_query(env: &worker::Env) -> bool {
+    env.var("CIPHERS_DEFAULT_ROW_QUERY")
+        .ok()
+        .map(|value| value.to_string().to_lowercase())
+        .map(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on"))
+        .unwrap_or(false)
+}
+
 /// Whether the user has 2FA enabled.
 pub(crate) async fn two_factor_enabled(
     db: &worker::D1Database,

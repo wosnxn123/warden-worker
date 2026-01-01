@@ -232,12 +232,14 @@ pub async fn list_ciphers(
 ) -> Result<RawJson, AppError> {
     let db = db::get_db(&env)?;
     let include_attachments = attachments::attachments_enabled(env.as_ref());
+    let force_row_query = super::ciphers_default_row_query(env.as_ref());
     let ciphers_json = fetch_cipher_json_array_raw(
         &db,
         include_attachments,
         "WHERE c.user_id = ?1 AND c.deleted_at IS NULL",
         &[claims.sub.clone().into()],
         "ORDER BY c.updated_at DESC",
+        force_row_query,
     )
     .await?;
 
@@ -532,12 +534,14 @@ pub async fn restore_ciphers_bulk(
     .map_err(db::map_d1_json_error)?;
 
     let include_attachments = attachments::attachments_enabled(env.as_ref());
+    let force_row_query = super::ciphers_default_row_query(env.as_ref());
     let ciphers_json = fetch_cipher_json_array_raw(
         &db,
         include_attachments,
         "WHERE c.user_id = ?1 AND c.id IN (SELECT value FROM json_each(?2, '$.ids'))",
         &[claims.sub.clone().into(), body.clone().into()],
         "",
+        force_row_query,
     )
     .await?;
 
@@ -734,6 +738,11 @@ struct CipherJsonArrayRow {
     ciphers_json: String,
 }
 
+#[derive(Deserialize)]
+struct CipherJsonRow {
+    cipher_json: String,
+}
+
 /// Build the SQL expression for a single cipher as JSON.
 fn cipher_json_expr(attachments_enabled: bool) -> String {
     let attachments_expr = if attachments_enabled {
@@ -820,6 +829,28 @@ fn cipher_json_array_sql(
     )
 }
 
+fn cipher_json_rows_sql(
+    attachments_enabled: bool,
+    where_clause: &str,
+    order_clause: &str,
+) -> String {
+    let cipher_expr = cipher_json_expr(attachments_enabled);
+    format!(
+        "SELECT {cipher_expr} AS cipher_json
+        FROM ciphers c
+        {where_clause}
+        {order_clause}",
+        cipher_expr = cipher_expr,
+        where_clause = where_clause,
+        order_clause = order_clause,
+    )
+}
+
+fn is_sqlite_toobig(err: &worker::Error) -> bool {
+    let msg = err.to_string().to_ascii_lowercase();
+    msg.contains("sqlite_toobig") || msg.contains("string or blob too big")
+}
+
 /// Execute a cipher JSON projection query and return the raw JSON array string.
 /// This avoids JSON parsing in Rust, significantly reducing CPU time.
 pub(crate) async fn fetch_cipher_json_array_raw(
@@ -828,17 +859,59 @@ pub(crate) async fn fetch_cipher_json_array_raw(
     where_clause: &str,
     params: &[JsValue],
     order_clause: &str,
+    force_row_query: bool,
 ) -> Result<String, AppError> {
+    async fn fetch_from_rows(
+        db: &worker::D1Database,
+        attachments_enabled: bool,
+        where_clause: &str,
+        params: &[JsValue],
+        order_clause: &str,
+    ) -> Result<String, AppError> {
+        let sql = cipher_json_rows_sql(attachments_enabled, where_clause, order_clause);
+        let rows: Vec<CipherJsonRow> = db
+            .prepare(&sql)
+            .bind(params)?
+            .all()
+            .await
+            .map_err(db::map_d1_json_error)?
+            .results()
+            .map_err(|_| AppError::Database)?;
+
+        if rows.is_empty() {
+            return Ok("[]".to_string());
+        }
+
+        let total_len: usize = rows.iter().map(|r| r.cipher_json.len()).sum();
+        let separators_len = rows.len().saturating_sub(1);
+        let mut out = String::with_capacity(total_len + separators_len + 2);
+        out.push('[');
+        for (idx, row) in rows.into_iter().enumerate() {
+            if idx > 0 {
+                out.push(',');
+            }
+            out.push_str(&row.cipher_json);
+        }
+        out.push(']');
+        Ok(out)
+    }
+
+    if force_row_query {
+        return fetch_from_rows(db, attachments_enabled, where_clause, params, order_clause).await;
+    }
+
     let sql = cipher_json_array_sql(attachments_enabled, where_clause, order_clause);
 
-    let row: Option<CipherJsonArrayRow> = db
-        .prepare(&sql)
-        .bind(params)?
-        .first(None)
-        .await
-        .map_err(db::map_d1_json_error)?;
+    let row: Result<Option<CipherJsonArrayRow>, worker::Error> =
+        db.prepare(&sql).bind(params)?.first(None).await;
 
-    Ok(row
-        .map(|r| r.ciphers_json)
-        .unwrap_or_else(|| "[]".to_string()))
+    match row {
+        Ok(row) => Ok(row
+            .map(|r| r.ciphers_json)
+            .unwrap_or_else(|| "[]".to_string())),
+        Err(err) if is_sqlite_toobig(&err) => {
+            fetch_from_rows(db, attachments_enabled, where_clause, params, order_clause).await
+        }
+        Err(err) => Err(db::map_d1_json_error(err)),
+    }
 }

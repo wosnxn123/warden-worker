@@ -52,6 +52,12 @@ run_worker_first = ["/api/*", "/identity/*"]
 # Set to 0 means no batching (all records imported in a single batch).
 # IMPORT_BATCH_SIZE = "30"
 
+# Cipher sync/list JSON query mode.
+# If enabled, fetch cipher JSON per-row and build the JSON array in the Worker
+# to avoid D1/SQLite `SQLITE_TOOBIG` errors on very large vaults.
+# Defaults to false (use `json_group_array` and fallback automatically on `SQLITE_TOOBIG`).
+# CIPHERS_DEFAULT_ROW_QUERY = "true"
+
 # Number of days to keep soft-deleted items before auto-purging.
 # Defaults to 30 days if not set. Set to 0 to disable auto-purge.
 # TRASH_AUTO_DELETE_DAYS = "30"
