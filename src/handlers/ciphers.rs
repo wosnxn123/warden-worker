@@ -233,7 +233,11 @@ pub async fn list_ciphers(
     let db = db::get_db(&env)?;
     let include_attachments = attachments::attachments_enabled(env.as_ref());
     let force_row_query = super::ciphers_default_row_query(env.as_ref());
-    let ciphers_json = fetch_cipher_json_array_raw(
+    // Response schema: {"data":[...],"object":"list","continuationToken":null}
+    let mut response = String::new();
+    response.push_str("{\"data\":");
+    append_cipher_json_array_raw(
+        &mut response,
         &db,
         include_attachments,
         "WHERE c.user_id = ?1 AND c.deleted_at IS NULL",
@@ -242,12 +246,7 @@ pub async fn list_ciphers(
         force_row_query,
     )
     .await?;
-
-    // Build response JSON via string concatenation (no parsing!)
-    let response = format!(
-        r#"{{"data":{},"object":"list","continuationToken":null}}"#,
-        ciphers_json
-    );
+    response.push_str(",\"object\":\"list\",\"continuationToken\":null}");
 
     Ok(RawJson(response))
 }
@@ -535,7 +534,15 @@ pub async fn restore_ciphers_bulk(
 
     let include_attachments = attachments::attachments_enabled(env.as_ref());
     let force_row_query = super::ciphers_default_row_query(env.as_ref());
-    let ciphers_json = fetch_cipher_json_array_raw(
+
+    db::touch_user_updated_at(&db, &claims.sub).await?;
+
+    // Build response JSON via string concatenation (no parsing!)
+    // Response schema: {"data":[...],"object":"list","continuationToken":null}
+    let mut response = String::new();
+    response.push_str("{\"data\":");
+    append_cipher_json_array_raw(
+        &mut response,
         &db,
         include_attachments,
         "WHERE c.user_id = ?1 AND c.id IN (SELECT value FROM json_each(?2, '$.ids'))",
@@ -544,14 +551,7 @@ pub async fn restore_ciphers_bulk(
         force_row_query,
     )
     .await?;
-
-    db::touch_user_updated_at(&db, &claims.sub).await?;
-
-    // Build response JSON via string concatenation (no parsing!)
-    let response = format!(
-        r#"{{"data":{},"object":"list","continuationToken":null}}"#,
-        ciphers_json
-    );
+    response.push_str(",\"object\":\"list\",\"continuationToken\":null}");
 
     Ok(RawJson(response))
 }
@@ -738,11 +738,6 @@ struct CipherJsonArrayRow {
     ciphers_json: String,
 }
 
-#[derive(Deserialize)]
-struct CipherJsonRow {
-    cipher_json: String,
-}
-
 /// Build the SQL expression for a single cipher as JSON.
 fn cipher_json_expr(attachments_enabled: bool) -> String {
     let attachments_expr = if attachments_enabled {
@@ -851,53 +846,27 @@ fn is_sqlite_toobig(err: &worker::Error) -> bool {
     msg.contains("sqlite_toobig") || msg.contains("string or blob too big")
 }
 
-/// Execute a cipher JSON projection query and return the raw JSON array string.
+/// Append ciphers JSON array to an existing buffer.
 /// This avoids JSON parsing in Rust, significantly reducing CPU time.
-pub(crate) async fn fetch_cipher_json_array_raw(
+pub(crate) async fn append_cipher_json_array_raw(
+    out: &mut String,
     db: &worker::D1Database,
     attachments_enabled: bool,
     where_clause: &str,
     params: &[JsValue],
     order_clause: &str,
     force_row_query: bool,
-) -> Result<String, AppError> {
-    async fn fetch_from_rows(
-        db: &worker::D1Database,
-        attachments_enabled: bool,
-        where_clause: &str,
-        params: &[JsValue],
-        order_clause: &str,
-    ) -> Result<String, AppError> {
-        let sql = cipher_json_rows_sql(attachments_enabled, where_clause, order_clause);
-        let rows: Vec<CipherJsonRow> = db
-            .prepare(&sql)
-            .bind(params)?
-            .all()
-            .await
-            .map_err(db::map_d1_json_error)?
-            .results()
-            .map_err(|_| AppError::Database)?;
-
-        if rows.is_empty() {
-            return Ok("[]".to_string());
-        }
-
-        let total_len: usize = rows.iter().map(|r| r.cipher_json.len()).sum();
-        let separators_len = rows.len().saturating_sub(1);
-        let mut out = String::with_capacity(total_len + separators_len + 2);
-        out.push('[');
-        for (idx, row) in rows.into_iter().enumerate() {
-            if idx > 0 {
-                out.push(',');
-            }
-            out.push_str(&row.cipher_json);
-        }
-        out.push(']');
-        Ok(out)
-    }
-
+) -> Result<(), AppError> {
     if force_row_query {
-        return fetch_from_rows(db, attachments_enabled, where_clause, params, order_clause).await;
+        return append_from_rows(
+            out,
+            db,
+            attachments_enabled,
+            where_clause,
+            params,
+            order_clause,
+        )
+        .await;
     }
 
     let sql = cipher_json_array_sql(attachments_enabled, where_clause, order_clause);
@@ -906,12 +875,78 @@ pub(crate) async fn fetch_cipher_json_array_raw(
         db.prepare(&sql).bind(params)?.first(None).await;
 
     match row {
-        Ok(row) => Ok(row
-            .map(|r| r.ciphers_json)
-            .unwrap_or_else(|| "[]".to_string())),
+        Ok(row) => {
+            if let Some(r) = row {
+                out.reserve(r.ciphers_json.len());
+                out.push_str(&r.ciphers_json);
+            } else {
+                out.push_str("[]");
+            }
+            Ok(())
+        }
         Err(err) if is_sqlite_toobig(&err) => {
-            fetch_from_rows(db, attachments_enabled, where_clause, params, order_clause).await
+            append_from_rows(
+                out,
+                db,
+                attachments_enabled,
+                where_clause,
+                params,
+                order_clause,
+            )
+            .await
         }
         Err(err) => Err(db::map_d1_json_error(err)),
     }
+}
+
+/// Append ciphers JSON array to an existing buffer row by row.
+/// This avoids JSON array exceeding the maximum size that can be returned in a single string.
+///
+/// Uses `raw_js_value()` to bypass Serde deserialization entirely, which should reduce
+/// CPU time for large payloads. Each row from `raw_js_value()` is a JS array `[cipher_json]`
+/// where the first element is the JSON string we need.
+pub(crate) async fn append_from_rows(
+    out: &mut String,
+    db: &worker::D1Database,
+    attachments_enabled: bool,
+    where_clause: &str,
+    params: &[JsValue],
+    order_clause: &str,
+) -> Result<(), AppError> {
+    use js_sys::Array;
+    use wasm_bindgen::JsCast;
+
+    let sql = cipher_json_rows_sql(attachments_enabled, where_clause, order_clause);
+
+    // Use raw_js_value() to get Vec<JsValue> without Serde deserialization.
+    // Each JsValue is a JS array: [cipher_json_string]
+    let raw_rows: Vec<JsValue> = db
+        .prepare(&sql)
+        .bind(params)?
+        .raw_js_value()
+        .await
+        .map_err(db::map_d1_json_error)?;
+
+    if raw_rows.is_empty() {
+        out.push_str("[]");
+        return Ok(());
+    }
+
+    out.push('[');
+    for (idx, row_js) in raw_rows.iter().enumerate() {
+        if idx > 0 {
+            out.push(',');
+        }
+        // Each row is a JS array [column0, column1, ...]. We only select one column (cipher_json).
+        let row_array = row_js
+            .dyn_ref::<Array>()
+            .ok_or_else(|| AppError::Internal)?;
+        let cipher_json_js = row_array.get(0);
+        let cipher_json = cipher_json_js
+            .as_string()
+            .ok_or_else(|| AppError::Internal)?;
+        out.push_str(&cipher_json);
+    }
+    out.push(']');
+    Ok(())
 }

@@ -6,7 +6,10 @@ use crate::{
     auth::Claims,
     db,
     error::AppError,
-    handlers::{attachments, ciphers, ciphers_default_row_query, domains, two_factor_enabled},
+    handlers::{
+        attachments, ciphers, ciphers_default_row_query, domains, sync_response_prealloc_bytes,
+        two_factor_enabled,
+    },
     models::{
         folder::{Folder, FolderResponse},
         sync::Profile,
@@ -80,15 +83,6 @@ pub async fn get_sync_data(
     // Fetch ciphers as raw JSON array string (no parsing in Rust!)
     let include_attachments = attachments::attachments_enabled(env.as_ref());
     let force_row_query = ciphers_default_row_query(env.as_ref());
-    let ciphers_json = ciphers::fetch_cipher_json_array_raw(
-        &db,
-        include_attachments,
-        "WHERE c.user_id = ?1",
-        &[user_id.clone().into()],
-        "",
-        force_row_query,
-    )
-    .await?;
 
     // Serialize profile and folders (small data, acceptable CPU cost)
     let mut profile = Profile::from_user(user, two_factor_enabled)?;
@@ -104,26 +98,59 @@ pub async fn get_sync_data(
     }))
     .map_err(|_| AppError::Internal)?;
 
-    let response = if query.exclude_domains {
-        format!(
-            r#"{{"profile":{},"folders":{},"collections":[],"policies":[],"ciphers":{},"sends":[],"userDecryption":{},"object":"sync"}}"#,
-            profile_json, folders_json, ciphers_json, user_decryption_json
-        )
-    } else {
+    const DEFAULT_SYNC_RESPONSE_PREALLOC_BYTES: usize = 1024 * 1024;
+
+    let capacity = sync_response_prealloc_bytes(env.as_ref())
+        .filter(|v| *v > 0)
+        .unwrap_or(DEFAULT_SYNC_RESPONSE_PREALLOC_BYTES);
+
+    // `/api/sync` response schema (Bitwarden-compatible):
+    // {
+    //   "profile": {...},
+    //   "folders": [...],
+    //   "collections": [],
+    //   "policies": [],
+    //   "ciphers": [...],
+    //   "domains": {...}, // omitted when excludeDomains=true
+    //   "sends": [],
+    //   "userDecryption": {...},
+    //   "object": "sync"
+    // }
+    //
+    // We build this as a JSON string to avoid parsing/re-serializing the (potentially huge) ciphers array.
+    let mut response = String::with_capacity(capacity);
+    response.push_str("{\"profile\":");
+    response.push_str(&profile_json);
+    response.push_str(",\"folders\":");
+    response.push_str(&folders_json);
+    response.push_str(",\"collections\":[],\"policies\":[],\"ciphers\":");
+    ciphers::append_cipher_json_array_raw(
+        &mut response,
+        &db,
+        include_attachments,
+        "WHERE c.user_id = ?1",
+        &[user_id.clone().into()],
+        "",
+        force_row_query,
+    )
+    .await?;
+
+    if !query.exclude_domains {
         // Match vaultwarden sync semantics:
         // - mark excluded in /api/settings/domains
         // - filter excluded out of sync payload
         let global_equivalent_domains =
             domains::global_equivalent_domains_json(&db, &excluded_globals, false).await;
-        let domains_json = format!(
-            r#"{{"equivalentDomains":{},"globalEquivalentDomains":{},"object":"domains"}}"#,
-            equivalent_domains, global_equivalent_domains
-        );
-        format!(
-            r#"{{"profile":{},"folders":{},"collections":[],"policies":[],"ciphers":{},"domains":{},"sends":[],"userDecryption":{},"object":"sync"}}"#,
-            profile_json, folders_json, ciphers_json, domains_json, user_decryption_json
-        )
-    };
+        response.push_str(",\"domains\":{\"equivalentDomains\":");
+        response.push_str(&equivalent_domains);
+        response.push_str(",\"globalEquivalentDomains\":");
+        response.push_str(&global_equivalent_domains);
+        response.push_str(",\"object\":\"domains\"}");
+    }
+
+    response.push_str(",\"sends\":[],\"userDecryption\":");
+    response.push_str(&user_decryption_json);
+    response.push_str(",\"object\":\"sync\"}");
 
     Ok(RawJson(response))
 }
