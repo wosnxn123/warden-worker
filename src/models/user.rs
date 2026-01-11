@@ -124,9 +124,7 @@ mod bool_from_int {
 pub struct PreloginResponse {
     pub kdf: i32,
     pub kdf_iterations: i32,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub kdf_memory: Option<i32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub kdf_parallelism: Option<i32>,
 }
 
