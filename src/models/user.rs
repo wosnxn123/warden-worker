@@ -144,6 +144,13 @@ pub struct RegisterRequest {
     pub kdf_parallelism: Option<i32>, // Argon2 parallelism parameter (1-16)
 }
 
+// For POST /accounts/password-hint request
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PasswordHintRequest {
+    pub email: String,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct KeyData {

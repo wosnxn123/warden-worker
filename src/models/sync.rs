@@ -13,8 +13,6 @@ pub struct Profile {
     pub avatar_color: Option<String>,
     pub email: String,
     pub id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub master_password_hint: Option<String>,
     pub security_stamp: String,
     pub object: String,
     pub premium_from_organization: bool,
@@ -47,7 +45,6 @@ impl Profile {
             name: user.name,
             avatar_color: user.avatar_color,
             email: user.email,
-            master_password_hint: user.master_password_hint,
             security_stamp: user.security_stamp,
             object: "profile".to_string(),
             premium_from_organization: false,
