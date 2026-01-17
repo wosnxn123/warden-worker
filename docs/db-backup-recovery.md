@@ -4,11 +4,12 @@ Centralize your D1 operational playbooks here: backup automation, restore flows,
 
 ## GitHub Actions Backups
 
-> [!NOTE] To use this backup feature, you must fork this repository and configure the required Cloudflare secrets as described in the [CI/CD deployment](deployment.md#cicd-deployment-with-github-actions) section in advance: `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, and `D1_DATABASE_ID` (and `D1_DATABASE_ID_DEV` if you want to backup `dev`).
+> [!NOTE]
+> To use this backup feature, you must fork this repository and configure the required Cloudflare secrets as described in the [CI/CD deployment](deployment.md#cicd-deployment-with-github-actions) section in advance: `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, and `D1_DATABASE_ID` (and `D1_DATABASE_ID_DEV` if you want to backup `dev`).
 
 This project includes a GitHub Action workflow that automatically exports your D1 database and uploads the backup to one or more destinations (S3-compatible storage and/or WebDAV) daily. The backup runs at 04:00 UTC (1 hour after the cleanup task).
 
-> [!NOTE] **Important Notes:** 
+> [!NOTE]
 > - **Manual trigger required for first run:** You must manually trigger the Action once (GitHub Actions → Backup D1 Database (S3/WebDAV) → Run workflow) before scheduled backups will run automatically.
 > - **Ensure your S3 bucket is set to private access** to prevent data leaks and avoid unnecessary public traffic costs.
 > - **⚠️ CRITICAL: Do NOT use R2 from the same Cloudflare account as your Worker** for backups. If your Cloudflare account gets suspended or banned, you will lose access to both your Worker and your backup storage, resulting in complete data loss. Always use a separate Cloudflare account or a different S3-compatible storage provider (AWS S3, Backblaze B2, MinIO, etc.) for backups to ensure redundancy and disaster recovery.
@@ -143,7 +144,8 @@ gunzip backup.sql.gz
     wrangler d1 execute DATABASE_NAME --remote --file=backup.sql
     ```
 
-    > [!NOTE] The `--remote` flag is required to execute against your production D1 database. Without it, the command will run against the local development database. 
+    > [!NOTE]
+    > The `--remote` flag is required to execute against your production D1 database. Without it, the command will run against the local development database. 
 
     > ⚠️ **Troubleshooting: `no such table: main.users` error**
     > 
@@ -184,4 +186,5 @@ To use Time Travel:
     wrangler d1 time-travel restore DATABASE_NAME --bookmark=<bookmark_id>
     ```
 
-> [!NOTE] Time Travel retains data for 30 days on the free tier. See [Cloudflare D1 Time Travel documentation](https://developers.cloudflare.com/d1/reference/time-travel/) for more details.
+> [!NOTE]
+> Time Travel retains data for 30 days on the free tier. See [Cloudflare D1 Time Travel documentation](https://developers.cloudflare.com/d1/reference/time-travel/) for more details.

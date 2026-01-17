@@ -148,7 +148,8 @@ To avoid bundling a large JSON file into the Worker, the dataset can be stored i
 
 If you skip seeding, `/api/settings/domains` and `/api/sync` will return `globalEquivalentDomains: []`.
 
-> [!NOTE] The `CLOUDFLARE_API_TOKEN` must have **both** Worker and D1 permissions:
+> [!NOTE]
+> The `CLOUDFLARE_API_TOKEN` must have **both** Worker and D1 permissions:
 > - **Edit Cloudflare Workers** - Required for deploying the Worker
 > - **Edit D1** - Required for database migrations and backups
 > 
