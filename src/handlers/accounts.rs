@@ -584,9 +584,8 @@ pub async fn delete_account(
     }
 
     if attachments::attachments_enabled(env.as_ref()) {
-        let bucket = attachments::require_bucket(env.as_ref())?;
         let keys = attachments::list_attachment_keys_for_user(&db, user_id).await?;
-        attachments::delete_r2_objects(&bucket, &keys).await?;
+        attachments::delete_storage_objects(env.as_ref(), &keys).await?;
     }
 
     // Delete all user's ciphers

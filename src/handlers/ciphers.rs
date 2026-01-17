@@ -398,7 +398,6 @@ pub async fn hard_delete_cipher(
     let db = db::get_db(&env)?;
 
     if attachments::attachments_enabled(env.as_ref()) {
-        let bucket = attachments::require_bucket(env.as_ref())?;
         let id_json = serde_json::to_string(&[&id]).map_err(|_| AppError::Internal)?;
         let keys = attachments::list_attachment_keys_for_cipher_ids_json(
             &db,
@@ -407,7 +406,7 @@ pub async fn hard_delete_cipher(
             Some(&claims.sub),
         )
         .await?;
-        attachments::delete_r2_objects(&bucket, &keys).await?;
+        attachments::delete_storage_objects(env.as_ref(), &keys).await?;
     }
 
     query!(
@@ -437,7 +436,6 @@ pub async fn hard_delete_ciphers_bulk(
     let db = db::get_db(&env)?;
 
     if attachments::attachments_enabled(env.as_ref()) {
-        let bucket = attachments::require_bucket(env.as_ref())?;
         let keys = attachments::list_attachment_keys_for_cipher_ids_json(
             &db,
             &body,
@@ -445,7 +443,7 @@ pub async fn hard_delete_ciphers_bulk(
             Some(&claims.sub),
         )
         .await?;
-        attachments::delete_r2_objects(&bucket, &keys).await?;
+        attachments::delete_storage_objects(env.as_ref(), &keys).await?;
     }
 
     query!(
@@ -710,9 +708,8 @@ pub async fn purge_vault(
     }
 
     if attachments::attachments_enabled(env.as_ref()) {
-        let bucket = attachments::require_bucket(env.as_ref())?;
         let keys = attachments::list_attachment_keys_for_user(&db, user_id).await?;
-        attachments::delete_r2_objects(&bucket, &keys).await?;
+        attachments::delete_storage_objects(env.as_ref(), &keys).await?;
     }
 
     // Delete all user's ciphers (both active and soft-deleted)

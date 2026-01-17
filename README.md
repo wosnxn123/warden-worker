@@ -15,7 +15,7 @@ Warden aims to solve this problem by leveraging the Cloudflare Workers ecosystem
 ## Features
 
 * **Core Vault Functionality:** Create, read, update, and delete ciphers and folders.
-* **File Attachments:** Optional Cloudflare R2 storage for attachments.
+* **File Attachments:** Optional Cloudflare KV or R2 storage for attachments.
 * **TOTP Support:** Store and generate Time-based One-Time Passwords.
 * **Bitwarden Compatible:** Works with official Bitwarden clients.
 * **Free to Host:** Runs on Cloudflare's free tier.
@@ -25,7 +25,17 @@ Warden aims to solve this problem by leveraging the Cloudflare Workers ecosystem
 
 ### Attachments Support
 
-Warden supports file attachments using Cloudflare R2 storage. Attachments are optional and require manual configuration to enable. See the deployment guide for setup details. Be aware that R2 may incur additional costs; see [Cloudflare R2 pricing](https://developers.cloudflare.com/r2/pricing/).
+Warden supports file attachments using either **Cloudflare KV** or **Cloudflare R2** as the storage backend:
+
+| Feature | KV | R2 |
+|---------|----|----|  
+| Max file size | **25 MB** (hard limit) | 100 MB (By request body size limit of Workers) |
+| Credit card required | **No** | Yes |
+| Streaming I/O | Yes | Yes |
+
+**Backend selection:** R2 takes priority — if R2 is configured, it will be used. Otherwise, KV is used.
+
+See the [deployment guide](docs/deployment.md) for setup details. R2 may incur additional costs; see [Cloudflare R2 pricing](https://developers.cloudflare.com/r2/pricing/).
 
 ## Current Status
 
