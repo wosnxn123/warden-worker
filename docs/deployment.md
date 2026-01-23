@@ -152,6 +152,7 @@ If you skip seeding, `/api/settings/domains` and `/api/sync` will return `global
 > The `CLOUDFLARE_API_TOKEN` must have **both** Worker and D1 permissions:
 > - **Edit Cloudflare Workers** - Required for deploying the Worker
 > - **Edit D1** - Required for database migrations and backups
+> - **Edit KV** - Required for attachments storage (if using KV)
 > 
 > When creating the API token in Cloudflare Dashboard, make sure to add both permissions under "Account" → "Cloudflare Workers" and "Account" → "D1".
 
