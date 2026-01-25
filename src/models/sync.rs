@@ -9,13 +9,13 @@ use serde_json::Value;
 pub struct Profile {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub avatar_color: Option<String>,
     pub email: String,
     pub id: String,
     pub security_stamp: String,
     pub object: String,
     pub premium_from_organization: bool,
+    pub culture: String,
     pub force_password_reset: bool,
     pub email_verified: bool,
     pub two_factor_enabled: bool,
@@ -48,6 +48,7 @@ impl Profile {
             security_stamp: user.security_stamp,
             object: "profile".to_string(),
             premium_from_organization: false,
+            culture: "en-US".to_string(),
             force_password_reset: false,
             email_verified: true,
             two_factor_enabled,

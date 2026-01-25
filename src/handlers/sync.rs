@@ -23,7 +23,7 @@ use serde_json::{json, Value};
 
 #[derive(Debug, Deserialize)]
 pub struct SyncQuery {
-    /// If true, omit domains data from sync (vaultwarden sets domains to null).
+    /// If true, set `domains` to null (vaultwarden behavior).
     #[serde(rename = "excludeDomains", default)]
     pub exclude_domains: bool,
 }
@@ -111,7 +111,7 @@ pub async fn get_sync_data(
     //   "collections": [],
     //   "policies": [],
     //   "ciphers": [...],
-    //   "domains": {...}, // omitted when excludeDomains=true
+    //   "domains": {...} | null, // null when excludeDomains=true
     //   "sends": [],
     //   "userDecryption": {...},
     //   "object": "sync"
@@ -135,13 +135,16 @@ pub async fn get_sync_data(
     )
     .await?;
 
-    if !query.exclude_domains {
+    response.push_str(",\"domains\":");
+    if query.exclude_domains {
+        response.push_str("null");
+    } else {
         // Match vaultwarden sync semantics:
         // - mark excluded in /api/settings/domains
         // - filter excluded out of sync payload
         let global_equivalent_domains =
             domains::global_equivalent_domains_json(&db, &excluded_globals, false).await;
-        response.push_str(",\"domains\":{\"equivalentDomains\":");
+        response.push_str("{\"equivalentDomains\":");
         response.push_str(&equivalent_domains);
         response.push_str(",\"globalEquivalentDomains\":");
         response.push_str(&global_equivalent_domains);
