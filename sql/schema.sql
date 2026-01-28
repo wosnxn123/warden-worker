@@ -40,6 +40,9 @@ CREATE TABLE IF NOT EXISTS ciphers (
     FOREIGN KEY (folder_id) REFERENCES folders(id) ON DELETE SET NULL
 );
 
+-- Index to speed up common per-user cipher queries (sync/list/attachments joins)
+CREATE INDEX IF NOT EXISTS idx_ciphers_user_id ON ciphers(user_id);
+
 -- Attachments table for cipher file metadata
 CREATE TABLE IF NOT EXISTS attachments (
     id TEXT PRIMARY KEY NOT NULL,
@@ -91,6 +94,8 @@ CREATE TABLE IF NOT EXISTS folders (
     updated_at TEXT NOT NULL,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
+
+CREATE INDEX IF NOT EXISTS idx_folders_user_id ON folders(user_id);
 
 -- Global equivalent domains dataset (seeded separately, not bundled into the Worker)
 CREATE TABLE IF NOT EXISTS global_equivalent_domains (
