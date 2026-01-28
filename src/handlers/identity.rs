@@ -1,14 +1,15 @@
 use axum::{extract::State, Form, Json};
 use chrono::{Duration, Utc};
 use constant_time_eq::constant_time_eq;
-use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header};
+use jwt_compact::AlgorithmExt;
+use jwt_compact::{alg::Hs256Key, Claims as JwtClaims, Header, UntrustedToken};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 use std::sync::Arc;
 use worker::{query, Env};
 
 use crate::{
-    auth::{jwt_validation, Claims},
+    auth::{jwt_time_options, Claims},
     crypto::{ct_eq, generate_salt, hash_password_for_storage, validate_totp},
     db,
     error::AppError,
@@ -116,8 +117,6 @@ pub struct UserDecryptionOptions {
 #[derive(Debug, Serialize, Deserialize)]
 struct RefreshClaims {
     pub sub: String, // User ID
-    pub exp: usize,  // Expiration time
-    pub nbf: usize,  // Not before time
 
     // NOTE: We intentionally do NOT implement refresh token rotation / replay detection here.
     // Vaultwarden's default auth flow also doesn't do rotation/reuse detection; in this project we
@@ -133,41 +132,38 @@ fn generate_tokens_and_response(
 ) -> Result<Json<TokenResponse>, AppError> {
     let now = Utc::now();
     let expires_in = Duration::hours(1);
-    let exp = (now + expires_in).timestamp() as usize;
+    let time_options = jwt_time_options();
 
-    let access_claims = Claims {
+    let access_claims = JwtClaims::new(Claims {
         sub: user.id.clone(),
-        exp,
-        nbf: now.timestamp() as usize,
         sstamp: user.security_stamp.clone(),
         premium: true,
         name: user.name.clone().unwrap_or_else(|| "User".to_string()),
         email: user.email.clone(),
         email_verified: true,
         amr: vec!["Application".into()],
-    };
+    })
+    .set_duration_and_issuance(&time_options, expires_in)
+    .set_not_before(now);
 
     let jwt_secret = env.secret("JWT_SECRET")?.to_string();
-    let access_token = encode(
-        &Header::default(),
-        &access_claims,
-        &EncodingKey::from_secret(jwt_secret.as_ref()),
-    )?;
+    let access_key = Hs256Key::new(jwt_secret.as_bytes());
+    let access_token = jwt_compact::alg::Hs256
+        .token(&Header::empty(), &access_claims, &access_key)
+        .map_err(|_| AppError::Crypto("Failed to create access token".to_string()))?;
 
     let refresh_expires_in = Duration::days(30);
-    let refresh_exp = (now + refresh_expires_in).timestamp() as usize;
-    let refresh_claims = RefreshClaims {
+    let refresh_claims = JwtClaims::new(RefreshClaims {
         sub: user.id,
-        exp: refresh_exp,
-        nbf: now.timestamp() as usize,
         sstamp: user.security_stamp,
-    };
+    })
+    .set_duration_and_issuance(&time_options, refresh_expires_in)
+    .set_not_before(now);
     let jwt_refresh_secret = env.secret("JWT_REFRESH_SECRET")?.to_string();
-    let refresh_token = encode(
-        &Header::default(),
-        &refresh_claims,
-        &EncodingKey::from_secret(jwt_refresh_secret.as_ref()),
-    )?;
+    let refresh_key = Hs256Key::new(jwt_refresh_secret.as_bytes());
+    let refresh_token = jwt_compact::alg::Hs256
+        .token(&Header::empty(), &refresh_claims, &refresh_key)
+        .map_err(|_| AppError::Crypto("Failed to create refresh token".to_string()))?;
 
     let has_master_password = !user.master_password_hash.is_empty();
     let master_password_unlock = if has_master_password {
@@ -491,14 +487,25 @@ pub async fn token(
                 .ok_or_else(|| AppError::BadRequest("Missing refresh_token".to_string()))?;
 
             let jwt_refresh_secret = env.secret("JWT_REFRESH_SECRET")?.to_string();
-            let token_data = decode::<RefreshClaims>(
-                &refresh_token,
-                &DecodingKey::from_secret(jwt_refresh_secret.as_ref()),
-                &jwt_validation(),
-            )
-            .map_err(|_| AppError::Unauthorized("Invalid refresh token".to_string()))?;
+            let refresh_key = Hs256Key::new(jwt_refresh_secret.as_bytes());
+            let token = UntrustedToken::new(&refresh_token)
+                .map_err(|_| AppError::Unauthorized("Invalid refresh token".to_string()))?;
+            let token = jwt_compact::alg::Hs256
+                .validator::<RefreshClaims>(&refresh_key)
+                .validate(&token)
+                .map_err(|_| AppError::Unauthorized("Invalid refresh token".to_string()))?;
+            let time_options = jwt_time_options();
+            token
+                .claims()
+                .validate_expiration(&time_options)
+                .map_err(|_| AppError::Unauthorized("Invalid refresh token".to_string()))?;
+            token
+                .claims()
+                .validate_maturity(&time_options)
+                .map_err(|_| AppError::Unauthorized("Invalid refresh token".to_string()))?;
 
-            let user_id = token_data.claims.sub;
+            let refresh_claims = token.into_parts().1.custom;
+            let user_id = refresh_claims.sub;
             let user: Value = db
                 .prepare("SELECT * FROM users WHERE id = ?1")
                 .bind(&[user_id.into()])?
@@ -509,7 +516,7 @@ pub async fn token(
             let user: User = serde_json::from_value(user).map_err(|_| AppError::Internal)?;
 
             if !constant_time_eq(
-                token_data.claims.sstamp.as_bytes(),
+                refresh_claims.sstamp.as_bytes(),
                 user.security_stamp.as_bytes(),
             ) {
                 return Err(AppError::Unauthorized("Invalid refresh token".to_string()));

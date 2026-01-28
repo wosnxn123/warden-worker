@@ -2,10 +2,11 @@ use axum::{
     extract::FromRequestParts,
     http::{header, request::Parts},
 };
+use chrono::Duration;
 use constant_time_eq::constant_time_eq;
-use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
+use jwt_compact::AlgorithmExt;
+use jwt_compact::{alg::Hs256Key, TimeOptions, UntrustedToken};
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
 use std::sync::Arc;
 use worker::Env;
 
@@ -17,8 +18,6 @@ pub(crate) const JWT_VALIDATION_LEEWAY_SECS: u64 = 60;
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Claims {
     pub sub: String,    // User ID
-    pub exp: usize,     // Expiration time
-    pub nbf: usize,     // Not before time
     pub sstamp: String, // Security stamp
 
     pub premium: bool,
@@ -28,17 +27,9 @@ pub struct Claims {
     pub amr: Vec<String>,
 }
 
-pub(crate) fn jwt_validation() -> Validation {
-    let mut required_spec_claims = HashSet::new();
-    required_spec_claims.insert("exp".to_string());
-
-    let mut validation = Validation::new(Algorithm::HS256);
-    validation.required_spec_claims = required_spec_claims;
-    validation.leeway = JWT_VALIDATION_LEEWAY_SECS;
-    validation.validate_exp = true;
-    validation.validate_nbf = true;
-    validation.algorithms = vec![Algorithm::HS256];
-    validation
+pub(crate) fn jwt_time_options() -> TimeOptions {
+    let leeway = Duration::seconds(JWT_VALIDATION_LEEWAY_SECS as i64);
+    TimeOptions::from_leeway(leeway)
 }
 
 /// AuthUser extractor - provides (user_id, email) tuple
@@ -70,11 +61,23 @@ impl FromRequestParts<Arc<Env>> for Claims {
         let secret = state.secret("JWT_SECRET")?;
 
         // Decode and validate the token
-        let decoding_key = DecodingKey::from_secret(secret.to_string().as_ref());
-        let token_data = decode::<Claims>(&token, &decoding_key, &jwt_validation())
+        let key = Hs256Key::new(secret.to_string().as_bytes());
+        let token = UntrustedToken::new(&token)
             .map_err(|_| AppError::Unauthorized("Invalid token".to_string()))?;
-
-        let claims = token_data.claims;
+        let token = jwt_compact::alg::Hs256
+            .validator::<Claims>(&key)
+            .validate(&token)
+            .map_err(|_| AppError::Unauthorized("Invalid token".to_string()))?;
+        let time_options = jwt_time_options();
+        token
+            .claims()
+            .validate_expiration(&time_options)
+            .map_err(|_| AppError::Unauthorized("Invalid token".to_string()))?;
+        token
+            .claims()
+            .validate_maturity(&time_options)
+            .map_err(|_| AppError::Unauthorized("Invalid token".to_string()))?;
+        let claims = token.into_parts().1.custom;
 
         let db = db::get_db(state)?;
         let current_sstamp = db

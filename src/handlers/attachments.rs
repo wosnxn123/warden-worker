@@ -5,8 +5,9 @@ use axum::{
     extract::{Multipart, Path, State},
     Extension, Json,
 };
-use chrono::Utc;
-use jsonwebtoken::{encode, EncodingKey, Header};
+use chrono::{TimeZone, Utc};
+use jwt_compact::AlgorithmExt;
+use jwt_compact::{alg::Hs256Key, Claims as JwtClaims, Header};
 use log;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -96,7 +97,6 @@ struct AttachmentDownloadClaims {
     pub sub: String,
     pub cipher_id: String,
     pub attachment_id: String,
-    pub exp: usize,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -854,20 +854,22 @@ fn build_upload_download_token(
         return Err(AppError::Internal);
     }
 
-    let claims = AttachmentDownloadClaims {
+    let expiration = Utc
+        .timestamp_opt(exp, 0)
+        .single()
+        .ok_or_else(|| AppError::Internal)?;
+    let mut claims = JwtClaims::new(AttachmentDownloadClaims {
         sub: user_id.to_string(),
         cipher_id: cipher_id.to_string(),
         attachment_id: attachment_id.to_string(),
-        exp: exp as usize,
-    };
+    });
+    claims.expiration = Some(expiration);
 
     let secret = jwt_secret(env)?;
-    encode(
-        &Header::default(),
-        &claims,
-        &EncodingKey::from_secret(secret.as_bytes()),
-    )
-    .map_err(AppError::from)
+    let key = Hs256Key::new(secret.as_bytes());
+    jwt_compact::alg::Hs256
+        .token(&Header::empty(), &claims, &key)
+        .map_err(|_| AppError::Crypto("Failed to create attachment token".to_string()))
 }
 
 fn upload_url(

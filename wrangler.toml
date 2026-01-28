@@ -20,7 +20,7 @@ tag = "do_v1"
 new_sqlite_classes = ["HeavyDo"]
 
 [build]
-command = "cargo install --locked -q worker-build --version 0.7.1 && worker-build --release --locked"
+command = "cargo install --locked -q worker-build --version 0.7.4 && worker-build --release --locked"
 
 # Rate limiting configuration for protecting sensitive endpoints
 # See: https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/
