@@ -123,6 +123,26 @@ Add the following secrets to your GitHub repository (`Settings > Secrets and var
 | `D1_DATABASE_ID` | yes | Your production D1 database ID |
 | `D1_DATABASE_ID_DEV` | no | Dev D1 database ID (required only if you use the `Deploy Dev` workflow on the `dev` branch) |
 
+#### How to Get Your Cloudflare Account ID
+
+1. Log in to the [Cloudflare Dashboard](https://dash.cloudflare.com/)
+2. Select your account
+3. Your Account ID is displayed in the right sidebar of the Overview page, or in the URL: `https://dash.cloudflare.com/<account-id>`
+
+#### How to Get Your Cloudflare API Token
+
+The `CLOUDFLARE_API_TOKEN` requires the following permissions:
+- **Edit Cloudflare Workers**: Required for deploying the Worker
+- **Edit D1**: Required for database migrations and backups
+- **Edit KV**: Required for attachments storage (if using KV)
+
+1. Visit [https://dash.cloudflare.com/profile/api-tokens](https://dash.cloudflare.com/profile/api-tokens)
+2. Click **Create Token**
+3. Use the **Edit Cloudflare Workers** template
+4. Add **Account** → **D1** under `Permissions`
+5. Select `Account Resources` and `Zone Resources`
+6. Click **Continue to Summary** and then **Create Token**
+
 ### Optional Variables
 
 #### Web Vault frontend version
@@ -147,20 +167,6 @@ To avoid bundling a large JSON file into the Worker, the dataset can be stored i
 | `GLOBAL_DOMAINS_URL_DEV` | dev | (empty) | raw GitHub URL | Same as prod, but for dev workflow |
 
 If you skip seeding, `/api/settings/domains` and `/api/sync` will return `globalEquivalentDomains: []`.
-
-> [!NOTE]
-> The `CLOUDFLARE_API_TOKEN` must have **both** Worker and D1 permissions:
-> - **Edit Cloudflare Workers** - Required for deploying the Worker
-> - **Edit D1** - Required for database migrations and backups
-> - **Edit KV** - Required for attachments storage (if using KV)
-> 
-> When creating the API token in Cloudflare Dashboard, make sure to add both permissions under "Account" → "Cloudflare Workers" and "Account" → "D1".
-
-### How to Get Your Cloudflare Account ID
-
-1. Log in to the [Cloudflare Dashboard](https://dash.cloudflare.com/)
-2. Select your account
-3. Your Account ID is displayed in the right sidebar of the Overview page, or in the URL: `https://dash.cloudflare.com/<account-id>`
 
 ### Usage
 
