@@ -191,11 +191,14 @@ If you skip seeding, `/api/settings/domains` and `/api/sync` will return `global
 
 5. **Monitor the deployment** in the Actions tab of your repository
 
-6. **Set up tables in database manually** in the Cloudflare dashboard
-
-7. **Set environment variables** as `secret` in the Cloudflare dashboard (following the command line deployment steps):
-   - `ALLOWED_EMAILS` your-email@example.com (supports glob patterns like `*@example.com`)
+6. **Set environment variables** as `secret` in the Cloudflare dashboard (following the command line deployment steps):
+   - `ALLOWED_EMAILS` your-email@example.com (supports glob patterns like `*@example.com`, comma separated)
    - `JWT_SECRET` a long random string
    - `JWT_REFRESH_SECRET` a long random string
+
+> [!IMPORTANT]
+> The server can't work without these three environment variables. If you forget to set them, the server will crash.
+
+If you want to show a 'Create account' button in frontend, you can add `DISABLE_USER_REGISTRATION` as `text` and set it to `false`. Check [Environment Variables](../README.md#environment-variables) for more details.
 
 By default, the `*.workers.dev` domain is disabled, since it may throw 1101 error. It's highly recommended to use a custom domain instead; see [Configure Custom Domain](../README.md#configure-custom-domain-optional) for more details.
