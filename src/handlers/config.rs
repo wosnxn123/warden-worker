@@ -54,7 +54,7 @@ pub async fn config(
           "vault": domain,
           "api": format!("{domain}/api"),
           "identity": format!("{domain}/identity"),
-          "notifications": format!(""),
+          "notifications": format!("{domain}/notifications"),
           "sso": format!(""),
           "cloudRegion": null,
         },

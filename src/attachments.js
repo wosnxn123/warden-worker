@@ -404,6 +404,30 @@ export async function handleAzureUpload(request, env, cipherId, attachmentId, to
     db.prepare("UPDATE users SET updated_at = ?1 WHERE id = ?2").bind(now, userId),
   ]);
 
+  if (env.NOTIFY_DO) {
+    try {
+      const id = env.NOTIFY_DO.idFromName("global");
+      const stub = env.NOTIFY_DO.get(id);
+      const response = await stub.fetch("https://notify.internal/publish/cipher-update", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId,
+          cipherId,
+          organizationId: pending.organization_id || null,
+          revisionDate: now,
+          contextId: null,
+        }),
+      });
+
+      if (!response.ok) {
+        console.error("NotifyDo publish failed for azure-upload finalize", response.status);
+      }
+    } catch (err) {
+      console.error("NotifyDo publish threw during azure-upload finalize", err);
+    }
+  }
+
   return new Response(null, { status: 201 });
 }
 

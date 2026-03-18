@@ -158,6 +158,16 @@ export default {
     request = new Request(url.toString(), request);
     const method = (request.method || "GET").toUpperCase();
 
+    if (
+      env.NOTIFY_DO &&
+      method === "GET" &&
+      (url.pathname === "/notifications/hub" || url.pathname === "/notifications/anonymous-hub")
+    ) {
+      const id = env.NOTIFY_DO.idFromName("global");
+      const stub = env.NOTIFY_DO.get(id);
+      return stub.fetch(request);
+    }
+
     // Optional: route selected CPU-heavy endpoints to Durable Objects.
     // This keeps the main Worker on a low-CPU path while allowing heavy work to complete.
     if (env.HEAVY_DO) {
@@ -237,4 +247,4 @@ export default {
 
 // Re-export Rust Durable Object class implemented in WASM.
 // wrangler.toml binds HEAVY_DO -> class_name = "HeavyDo".
-export { HeavyDo } from "../build/index.js";
+export { HeavyDo, NotifyDo } from "../build/index.js";

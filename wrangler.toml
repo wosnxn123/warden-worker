@@ -12,12 +12,17 @@ bindings = [
   # while keeping the main Worker fast for the rest.
   #
   # - HEAVY_DO: Rust DO, reuses existing axum router for CPU-heavy endpoints (import/login/password verify).
-  { name = "HEAVY_DO", class_name = "HeavyDo" }
+  { name = "HEAVY_DO", class_name = "HeavyDo" },
+  { name = "NOTIFY_DO", class_name = "NotifyDo" }
 ]
 
 [[migrations]]
 tag = "do_v1"
 new_sqlite_classes = ["HeavyDo"]
+
+[[migrations]]
+tag = "do_v2"
+new_sqlite_classes = ["NotifyDo"]
 
 [build]
 command = "cargo install --locked -q worker-build --version 0.7.4 && worker-build --release --locked"
@@ -40,7 +45,7 @@ directory = "./public/web-vault"
 not_found_handling = "404-page"
 html_handling = "auto-trailing-slash"
 # Only invoke Worker for API and Identity routes, serve static files directly for other routes
-run_worker_first = ["/api/*", "/identity/*"]
+run_worker_first = ["/api/*", "/identity/*", "/notifications/*"]
 
 [vars]
 # Server-side password hashing PBKDF2 iterations (stored per-user).
@@ -114,7 +119,8 @@ preview_urls = false
 
 [env.dev.durable_objects]
 bindings = [
-  { name = "HEAVY_DO", class_name = "HeavyDo" }
+  { name = "HEAVY_DO", class_name = "HeavyDo" },
+  { name = "NOTIFY_DO", class_name = "NotifyDo" }
 ]
 
 # Dev environment also needs cron triggers

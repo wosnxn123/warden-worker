@@ -12,6 +12,7 @@ mod durable;
 mod error;
 mod handlers;
 mod models;
+mod notifications;
 mod router;
 
 /// Base URL extracted from the incoming request, used for config endpoint.

@@ -5,6 +5,7 @@
 //! retention period.
 
 use crate::handlers::attachments;
+use crate::notifications::{self, UpdateType};
 use chrono::{Duration, Utc};
 use std::collections::HashSet;
 use worker::{query, D1Database, Env};
@@ -149,6 +150,18 @@ pub async fn purge_deleted_ciphers(env: &Env) -> Result<u32, worker::Error> {
             )?
             .run()
             .await?;
+
+            if let Err(error) = notifications::publish_user_update(
+                env,
+                user_id,
+                UpdateType::SyncVault,
+                &now_str,
+                None,
+            )
+            .await
+            {
+                log::error!("Failed to publish purge SyncVault notification: {error}");
+            }
         }
 
         log::info!(

@@ -22,6 +22,7 @@ use crate::{
             RotateKeyRequest, User,
         },
     },
+    notifications::{self, UpdateType},
 };
 
 const KDF_TYPE_PBKDF2: i32 = 0;
@@ -488,6 +489,18 @@ pub async fn post_profile(
     .await
     .map_err(|_| AppError::Database)?;
 
+    if let Err(error) = notifications::publish_user_update(
+        env.as_ref(),
+        user_id,
+        UpdateType::SyncSettings,
+        &now,
+        None,
+    )
+    .await
+    {
+        log::error!("Failed to publish profile SyncSettings notification: {error}");
+    }
+
     let two_factor_enabled = two_factor_enabled(&db, user_id).await?;
     let profile = Profile::from_user(user, two_factor_enabled)?;
 
@@ -546,6 +559,18 @@ pub async fn put_avatar(
     .run()
     .await
     .map_err(|_| AppError::Database)?;
+
+    if let Err(error) = notifications::publish_user_update(
+        env.as_ref(),
+        user_id,
+        UpdateType::SyncSettings,
+        &now,
+        None,
+    )
+    .await
+    {
+        log::error!("Failed to publish avatar SyncSettings notification: {error}");
+    }
 
     let two_factor_enabled = two_factor_enabled(&db, user_id).await?;
     let profile = Profile::from_user(user, two_factor_enabled)?;
@@ -668,6 +693,11 @@ pub async fn post_password(
     .map_err(|_| AppError::Database)?
     .run()
     .await?;
+
+    if let Err(error) = notifications::publish_user_logout(env.as_ref(), user_id, &now, None).await
+    {
+        log::error!("Failed to publish password LogOut notification: {error}");
+    }
 
     Ok(Json(json!({})))
 }
@@ -823,7 +853,7 @@ pub async fn post_rotatekey(
         ));
     }
 
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
+    let now = db::now_string();
 
     // Update all folders with new encrypted names (batch operation)
     // Skip null folder IDs (Bitwarden client bug: https://github.com/bitwarden/clients/issues/8453)
@@ -938,6 +968,11 @@ pub async fn post_rotatekey(
     .map_err(|_| AppError::Database)?
     .run()
     .await?;
+
+    if let Err(error) = notifications::publish_user_logout(env.as_ref(), user_id, &now, None).await
+    {
+        log::error!("Failed to publish rotatekey LogOut notification: {error}");
+    }
 
     Ok(Json(json!({})))
 }
@@ -1054,6 +1089,11 @@ pub async fn post_kdf(
     .map_err(|_| AppError::Database)?
     .run()
     .await?;
+
+    if let Err(error) = notifications::publish_user_logout(env.as_ref(), user_id, &now, None).await
+    {
+        log::error!("Failed to publish kdf LogOut notification: {error}");
+    }
 
     Ok(Json(json!({})))
 }

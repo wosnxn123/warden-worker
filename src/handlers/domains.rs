@@ -7,7 +7,12 @@ use std::sync::Arc;
 use worker::{query, Env};
 
 use crate::handlers::ciphers::RawJson;
-use crate::{auth::Claims, db, error::AppError};
+use crate::{
+    auth::Claims,
+    db,
+    error::AppError,
+    notifications::{self, UpdateType},
+};
 
 /// Build `globalEquivalentDomains` JSON (as a raw JSON string) in SQLite/D1.
 ///
@@ -183,6 +188,18 @@ pub async fn post_domains(
     .run()
     .await
     .map_err(|_| AppError::Database)?;
+
+    if let Err(error) = notifications::publish_user_update(
+        env.as_ref(),
+        &claims.sub,
+        UpdateType::SyncSettings,
+        &now,
+        None,
+    )
+    .await
+    {
+        log::error!("Failed to publish domains SyncSettings notification: {error}");
+    }
 
     Ok(Json(json!({})))
 }

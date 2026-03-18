@@ -22,6 +22,7 @@ use crate::{
         attachment::{AttachmentDB, AttachmentResponse},
         cipher::{Cipher, CipherDBModel},
     },
+    notifications::{self, UpdateType},
     BaseUrl,
 };
 
@@ -117,8 +118,11 @@ impl NumberOrString {
     }
 }
 
-async fn touch_cipher_updated_at(db: &D1Database, cipher_id: &str) -> Result<(), AppError> {
-    let now = now_string();
+async fn touch_cipher_updated_at(
+    db: &D1Database,
+    cipher_id: &str,
+    now: &str,
+) -> Result<(), AppError> {
     query!(
         db,
         "UPDATE ciphers SET updated_at = ?1 WHERE id = ?2",
@@ -174,7 +178,7 @@ pub async fn create_attachment_v2(
     .await?;
 
     let attachment_id = Uuid::new_v4().to_string();
-    let now = now_string();
+    let now = db::now_string();
 
     query!(
         &db,
@@ -242,7 +246,7 @@ pub async fn upload_attachment_v2_data(
     }
     let db = db::get_db(&env)?;
 
-    let _cipher = ensure_cipher_for_user(&db, &cipher_id, &claims.sub).await?;
+    let cipher = ensure_cipher_for_user(&db, &cipher_id, &claims.sub).await?;
 
     let mut pending = fetch_pending_attachment(&db, &attachment_id).await?;
     if pending.cipher_id != cipher_id {
@@ -288,7 +292,7 @@ pub async fn upload_attachment_v2_data(
     upload_to_storage(&env, &pending.r2_key(), content_type, file_bytes.to_vec()).await?;
 
     // Finalize: move pending -> attachments and touch timestamps
-    let now = now_string();
+    let now = db::now_string();
     query!(
         &db,
         "INSERT INTO attachments (id, cipher_id, file_name, file_size, akey, created_at, updated_at, organization_id)
@@ -315,8 +319,24 @@ pub async fn upload_attachment_v2_data(
     .run()
     .await?;
 
-    touch_cipher_updated_at(&db, &cipher_id).await?;
-    db::touch_user_updated_at(&db, &claims.sub).await?;
+    touch_cipher_updated_at(&db, &cipher_id, &now).await?;
+    db::touch_user_updated_at(&db, &claims.sub, &now).await?;
+
+    if let Err(error) = notifications::publish_cipher_update(
+        env.as_ref(),
+        &claims.sub,
+        UpdateType::SyncCipherUpdate,
+        &cipher_id,
+        Some(&claims.sub),
+        cipher.organization_id.as_deref(),
+        None,
+        Some(&now),
+        None,
+    )
+    .await
+    {
+        log::error!("Failed to publish v2 attachment upload notification: {error}");
+    }
 
     Ok(Json(()))
 }
@@ -355,7 +375,7 @@ pub async fn upload_attachment_legacy(
     enforce_limits(&db, &env, &claims.sub, actual_size, None).await?;
 
     let attachment_id = Uuid::new_v4().to_string();
-    let now = now_string();
+    let now = db::now_string();
 
     query!(
         &db,
@@ -382,8 +402,24 @@ pub async fn upload_attachment_legacy(
     )
     .await?;
 
-    touch_cipher_updated_at(&db, &cipher_id).await?;
-    db::touch_user_updated_at(&db, &claims.sub).await?;
+    touch_cipher_updated_at(&db, &cipher_id, &now).await?;
+    db::touch_user_updated_at(&db, &claims.sub, &now).await?;
+
+    if let Err(error) = notifications::publish_cipher_update(
+        env.as_ref(),
+        &claims.sub,
+        UpdateType::SyncCipherUpdate,
+        &cipher_id,
+        Some(&claims.sub),
+        cipher.organization_id.as_deref(),
+        None,
+        Some(&now),
+        None,
+    )
+    .await
+    {
+        log::error!("Failed to publish legacy attachment upload notification: {error}");
+    }
 
     // reload cipher to return fresh updated_at and attachments state
     let mut cipher_response: Cipher = cipher.into();
@@ -451,8 +487,25 @@ pub async fn delete_attachment(
         .run()
         .await?;
 
-    touch_cipher_updated_at(&db, &cipher_id).await?;
-    db::touch_user_updated_at(&db, &claims.sub).await?;
+    let now = db::now_string();
+    touch_cipher_updated_at(&db, &cipher_id, &now).await?;
+    db::touch_user_updated_at(&db, &claims.sub, &now).await?;
+
+    if let Err(error) = notifications::publish_cipher_update(
+        env.as_ref(),
+        &claims.sub,
+        UpdateType::SyncCipherUpdate,
+        &cipher_id,
+        Some(&claims.sub),
+        cipher.organization_id.as_deref(),
+        None,
+        Some(&now),
+        None,
+    )
+    .await
+    {
+        log::error!("Failed to publish attachment delete notification: {error}");
+    }
 
     // Reload cipher to return fresh updated_at and attachments state
     let mut cipher_response: Cipher = ensure_cipher_for_user(&db, &cipher_id, &claims.sub)
@@ -629,10 +682,6 @@ fn download_url(
     Ok(format!(
         "{normalized_base}/api/ciphers/{cipher_id}/attachment/{attachment_id}/download?token={token}"
     ))
-}
-
-fn now_string() -> String {
-    Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string()
 }
 
 async fn ensure_cipher_for_user(
