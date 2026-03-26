@@ -94,8 +94,9 @@ pub enum NumberOrString {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct AttachmentDownloadClaims {
+struct AttachmentClaims {
     pub sub: String,
+    pub device: String,
     pub cipher_id: String,
     pub attachment_id: String,
 }
@@ -197,7 +198,14 @@ pub async fn create_attachment_v2(
     .await?;
 
     // Return upload URL pointing to local upload endpoint
-    let url = upload_url(&env, &base_url, &cipher_id, &attachment_id, &claims.sub)?;
+    let url = upload_url(
+        &env,
+        &base_url,
+        &cipher_id,
+        &attachment_id,
+        &claims.sub,
+        &claims.client_id,
+    )?;
     let mut cipher_response: Cipher = cipher.into();
     hydrate_cipher_attachments(&db, &env, &mut cipher_response).await?;
 
@@ -331,7 +339,7 @@ pub async fn upload_attachment_v2_data(
         cipher.organization_id.as_deref(),
         None,
         Some(&now),
-        None,
+        Some(&claims.device),
     )
     .await
     {
@@ -414,7 +422,7 @@ pub async fn upload_attachment_legacy(
         cipher.organization_id.as_deref(),
         None,
         Some(&now),
-        None,
+        Some(&claims.device),
     )
     .await
     {
@@ -452,7 +460,14 @@ pub async fn get_attachment(
         ));
     }
 
-    let url = download_url(&env, &base_url, &cipher_id, &attachment_id, &claims.sub)?;
+    let url = download_url(
+        &env,
+        &base_url,
+        &cipher_id,
+        &attachment_id,
+        &claims.sub,
+        &claims.client_id,
+    )?;
     Ok(Json(attachment.to_response(Some(url))))
 }
 
@@ -500,7 +515,7 @@ pub async fn delete_attachment(
         cipher.organization_id.as_deref(),
         None,
         Some(&now),
-        None,
+        Some(&claims.device),
     )
     .await
     {
@@ -676,8 +691,9 @@ fn download_url(
     cipher_id: &str,
     attachment_id: &str,
     user_id: &str,
+    device: &str,
 ) -> Result<String, AppError> {
-    let token = build_upload_download_token(env, user_id, cipher_id, attachment_id)?;
+    let token = build_upload_download_token(env, user_id, device, cipher_id, attachment_id)?;
     let normalized_base = base_url.trim_end_matches('/');
     Ok(format!(
         "{normalized_base}/api/ciphers/{cipher_id}/attachment/{attachment_id}/download?token={token}"
@@ -884,6 +900,7 @@ fn validate_size_within_declared(
 fn build_upload_download_token(
     env: &Env,
     user_id: &str,
+    device: &str,
     cipher_id: &str,
     attachment_id: &str,
 ) -> Result<String, AppError> {
@@ -907,8 +924,9 @@ fn build_upload_download_token(
         .timestamp_opt(exp, 0)
         .single()
         .ok_or_else(|| AppError::Internal)?;
-    let mut claims = JwtClaims::new(AttachmentDownloadClaims {
+    let mut claims = JwtClaims::new(AttachmentClaims {
         sub: user_id.to_string(),
+        device: device.to_string(),
         cipher_id: cipher_id.to_string(),
         attachment_id: attachment_id.to_string(),
     });
@@ -927,8 +945,9 @@ fn upload_url(
     cipher_id: &str,
     attachment_id: &str,
     user_id: &str,
+    device: &str,
 ) -> Result<String, AppError> {
-    let token = build_upload_download_token(env, user_id, cipher_id, attachment_id)?;
+    let token = build_upload_download_token(env, user_id, device, cipher_id, attachment_id)?;
     let normalized_base = base_url.trim_end_matches('/');
     Ok(format!(
         "{normalized_base}/api/ciphers/{cipher_id}/attachment/{attachment_id}/azure-upload?token={token}"

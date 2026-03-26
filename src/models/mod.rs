@@ -1,5 +1,6 @@
 pub mod attachment;
 pub mod cipher;
+pub mod device;
 pub mod folder;
 pub mod import;
 pub mod sync;

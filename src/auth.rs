@@ -12,6 +12,7 @@ use worker::Env;
 
 use crate::db;
 use crate::error::AppError;
+use crate::models::device::Device;
 
 pub(crate) const JWT_VALIDATION_LEEWAY_SECS: u64 = 60;
 
@@ -24,6 +25,10 @@ pub struct Claims {
     pub name: String,
     pub email: String,
     pub email_verified: bool,
+    pub device: String,
+    pub devicetype: String,
+    pub client_id: String,
+    pub scope: Vec<String>,
     pub amr: Vec<String>,
 }
 
@@ -118,6 +123,11 @@ pub(crate) async fn decode_access_token(env: &Env, token: &str) -> Result<Claims
         .ok_or_else(|| AppError::Unauthorized("Invalid token".to_string()))?;
 
     if !constant_time_eq(claims.sstamp.as_bytes(), current_sstamp.as_bytes()) {
+        return Err(AppError::Unauthorized("Invalid token".to_string()));
+    }
+
+    let device = Device::find_by_identifier_and_user(&db, &claims.device, &claims.sub).await?;
+    if device.is_none() {
         return Err(AppError::Unauthorized("Invalid token".to_string()));
     }
 

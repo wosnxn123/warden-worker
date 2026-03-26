@@ -194,7 +194,7 @@ pub async fn post_domains(
         &claims.sub,
         UpdateType::SyncSettings,
         &now,
-        None,
+        Some(&claims.device),
     )
     .await
     {

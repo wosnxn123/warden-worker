@@ -183,7 +183,7 @@ pub async fn import_data(
         &claims.sub,
         UpdateType::SyncVault,
         &now,
-        None,
+        Some(&claims.device),
     )
     .await
     {

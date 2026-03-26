@@ -124,7 +124,8 @@ impl NotifyDo {
         };
 
         let pair = WebSocketPair::new()?;
-        let attachment = ConnectionAttachment::user(claims.sub.clone(), None, db::now_string());
+        let attachment =
+            ConnectionAttachment::user(claims.sub.clone(), Some(claims.device), db::now_string());
         pair.server.serialize_attachment(&attachment)?;
 
         let user_tag = notifications::user_tag(&claims.sub);
@@ -143,6 +144,16 @@ impl NotifyDo {
         let Some(token) = query.token.filter(|value| !value.is_empty()) else {
             return Response::error("Missing token", 400);
         };
+
+        // TODO: auth request is not implemented yet, this should't pass
+        if self
+            .env
+            .var("ANONYMOUS_HUB_ENABLED")
+            .ok()
+            .is_none_or(|value| value.to_string() != "true")
+        {
+            return Response::error("Anonymous hub is not enabled", 403);
+        }
 
         let pair = WebSocketPair::new()?;
         let attachment = ConnectionAttachment::anonymous(token.clone(), db::now_string());

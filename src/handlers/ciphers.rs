@@ -118,7 +118,7 @@ pub async fn create_cipher(
         cipher.organization_id.as_deref(),
         cipher.collection_ids.clone(),
         Some(&cipher.updated_at),
-        None,
+        Some(&claims.device),
     )
     .await
     {
@@ -236,7 +236,7 @@ pub async fn update_cipher(
         cipher.organization_id.as_deref(),
         None,
         Some(&cipher.updated_at),
-        None,
+        Some(&claims.device),
     )
     .await
     {
@@ -388,7 +388,7 @@ pub async fn soft_delete_cipher(
         existing_cipher.organization_id.as_deref(),
         None,
         Some(&now),
-        None,
+        Some(&claims.device),
     )
     .await
     {
@@ -429,7 +429,7 @@ pub async fn soft_delete_ciphers_bulk(
         &claims.sub,
         UpdateType::SyncCiphers,
         &now,
-        None,
+        Some(&claims.device),
     )
     .await
     {
@@ -484,7 +484,7 @@ pub async fn hard_delete_cipher(
         existing_cipher.organization_id.as_deref(),
         None,
         Some(&now),
-        None,
+        Some(&claims.device),
     )
     .await
     {
@@ -535,7 +535,7 @@ pub async fn hard_delete_ciphers_bulk(
         &claims.sub,
         UpdateType::SyncCiphers,
         &now,
-        None,
+        Some(&claims.device),
     )
     .await
     {
@@ -584,7 +584,7 @@ pub async fn restore_cipher(
         cipher.organization_id.as_deref(),
         None,
         Some(&cipher.updated_at),
-        None,
+        Some(&claims.device),
     )
     .await
     {
@@ -629,7 +629,7 @@ pub async fn restore_ciphers_bulk(
         &claims.sub,
         UpdateType::SyncCiphers,
         &now,
-        None,
+        Some(&claims.device),
     )
     .await
     {
@@ -724,7 +724,7 @@ pub async fn create_cipher_simple(
         cipher.organization_id.as_deref(),
         None,
         Some(&cipher.updated_at),
-        None,
+        Some(&claims.device),
     )
     .await
     {
@@ -787,7 +787,7 @@ pub async fn move_cipher_selected(
         user_id,
         UpdateType::SyncCiphers,
         &now,
-        None,
+        Some(&claims.device),
     )
     .await
     {
@@ -854,9 +854,14 @@ pub async fn purge_vault(
     let now = db::now_string();
     db::touch_user_updated_at(&db, user_id, &now).await?;
 
-    if let Err(error) =
-        notifications::publish_user_update(env.as_ref(), user_id, UpdateType::SyncVault, &now, None)
-            .await
+    if let Err(error) = notifications::publish_user_update(
+        env.as_ref(),
+        user_id,
+        UpdateType::SyncVault,
+        &now,
+        Some(&claims.device),
+    )
+    .await
     {
         log::error!("Failed to publish purge vault notification: {error}");
     }

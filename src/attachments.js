@@ -248,6 +248,10 @@ export async function handleAzureUpload(request, env, cipherId, attachmentId, to
   }
 
   const userId = claims.sub;
+  const contextId =
+    typeof claims.device === "string" && claims.device.length > 0
+      ? claims.device
+      : null;
 
   // Verify cipher belongs to user and is not deleted
   const cipher = await db
@@ -416,7 +420,7 @@ export async function handleAzureUpload(request, env, cipherId, attachmentId, to
           cipherId,
           organizationId: pending.organization_id || null,
           revisionDate: now,
-          contextId: null,
+          contextId,
         }),
       });
 

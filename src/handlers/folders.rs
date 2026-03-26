@@ -99,7 +99,7 @@ pub async fn create_folder(
         UpdateType::SyncFolderCreate,
         &folder.id,
         &folder.updated_at,
-        None,
+        Some(&claims.device),
     )
     .await
     {
@@ -143,7 +143,7 @@ pub async fn delete_folder(
         UpdateType::SyncFolderDelete,
         &id,
         &now,
-        None,
+        Some(&claims.device),
     )
     .await
     {
@@ -201,7 +201,7 @@ pub async fn update_folder(
         UpdateType::SyncFolderUpdate,
         &folder.id,
         &folder.updated_at,
-        None,
+        Some(&claims.device),
     )
     .await
     {

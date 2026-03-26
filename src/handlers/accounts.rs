@@ -494,7 +494,7 @@ pub async fn post_profile(
         user_id,
         UpdateType::SyncSettings,
         &now,
-        None,
+        Some(&claims.device),
     )
     .await
     {
@@ -565,7 +565,7 @@ pub async fn put_avatar(
         user_id,
         UpdateType::SyncSettings,
         &now,
-        None,
+        Some(&claims.device),
     )
     .await
     {
@@ -694,7 +694,8 @@ pub async fn post_password(
     .run()
     .await?;
 
-    if let Err(error) = notifications::publish_user_logout(env.as_ref(), user_id, &now, None).await
+    if let Err(error) =
+        notifications::publish_user_logout(env.as_ref(), user_id, &now, Some(&claims.device)).await
     {
         log::error!("Failed to publish password LogOut notification: {error}");
     }
@@ -969,7 +970,8 @@ pub async fn post_rotatekey(
     .run()
     .await?;
 
-    if let Err(error) = notifications::publish_user_logout(env.as_ref(), user_id, &now, None).await
+    if let Err(error) =
+        notifications::publish_user_logout(env.as_ref(), user_id, &now, Some(&claims.device)).await
     {
         log::error!("Failed to publish rotatekey LogOut notification: {error}");
     }
@@ -1090,7 +1092,8 @@ pub async fn post_kdf(
     .run()
     .await?;
 
-    if let Err(error) = notifications::publish_user_logout(env.as_ref(), user_id, &now, None).await
+    if let Err(error) =
+        notifications::publish_user_logout(env.as_ref(), user_id, &now, Some(&claims.device)).await
     {
         log::error!("Failed to publish kdf LogOut notification: {error}");
     }
