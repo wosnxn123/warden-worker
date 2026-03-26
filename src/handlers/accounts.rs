@@ -15,6 +15,7 @@ use crate::{
     handlers::attachments,
     models::{
         cipher::CipherData,
+        device::Device,
         sync::Profile,
         user::{
             AvatarData, ChangeKdfRequest, ChangePasswordRequest, MasterPasswordUnlockData,
@@ -1096,6 +1097,61 @@ pub async fn post_kdf(
         notifications::publish_user_logout(env.as_ref(), user_id, &now, Some(&claims.device)).await
     {
         log::error!("Failed to publish kdf LogOut notification: {error}");
+    }
+
+    Ok(Json(json!({})))
+}
+
+/// POST /api/accounts/security-stamp - invalidates all tokens and forces logout
+#[worker::send]
+pub async fn post_sstamp(
+    claims: Claims,
+    State(env): State<Arc<Env>>,
+    Json(payload): Json<PasswordOrOtpData>,
+) -> Result<Json<Value>, AppError> {
+    let db = db::get_db(&env)?;
+    let user_id = &claims.sub;
+
+    // Load the user to verify credentials
+    let user: User = db
+        .prepare("SELECT * FROM users WHERE id = ?1")
+        .bind(&[user_id.clone().into()])?
+        .first(None)
+        .await
+        .map_err(|_| AppError::Database)?
+        .ok_or_else(|| AppError::NotFound("User not found".to_string()))?;
+
+    // Require master password hash (OTP not supported)
+    let provided_hash = payload
+        .master_password_hash
+        .ok_or_else(|| AppError::BadRequest("Missing master password hash".to_string()))?;
+
+    let verification = user.verify_master_password(&provided_hash).await?;
+    if !verification.is_valid() {
+        return Err(AppError::Unauthorized("Invalid password".to_string()));
+    }
+
+    // Delete all device rows — this revokes every refresh token and 2FA-remember token
+    Device::delete_all_by_user(&db, user_id).await?;
+
+    // Rotate the security stamp so all existing access tokens become invalid immediately
+    let new_security_stamp = Uuid::new_v4().to_string();
+    let now = Utc::now().to_rfc3339();
+
+    query!(
+        &db,
+        "UPDATE users SET security_stamp = ?1, updated_at = ?2 WHERE id = ?3",
+        new_security_stamp,
+        now,
+        user_id
+    )
+    .map_err(|_| AppError::Database)?
+    .run()
+    .await?;
+
+    if let Err(error) = notifications::publish_user_logout(env.as_ref(), user_id, &now, None).await
+    {
+        log::error!("Failed to publish security-stamp LogOut notification: {error}");
     }
 
     Ok(Json(json!({})))

@@ -43,6 +43,11 @@ pub fn api_router(env: Env) -> Router {
         .route("/api/accounts/kdf", post(accounts::post_kdf))
         // Change password
         .route("/api/accounts/password", post(accounts::post_password))
+        // Log out all sessions via security stamp rotation
+        .route(
+            "/api/accounts/security-stamp",
+            post(accounts::post_sstamp),
+        )
         // Rotate encryption keys
         .route(
             "/api/accounts/key-management/rotate-user-account-keys",

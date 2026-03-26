@@ -242,6 +242,17 @@ impl Device {
         self.updated_at = now;
         Ok(())
     }
+
+    /// Delete all device rows for a user, effectively revoking all refresh tokens and
+    /// logging out every active session.
+    pub async fn delete_all_by_user(db: &D1Database, user_id: &str) -> Result<(), AppError> {
+        query!(db, "DELETE FROM devices WHERE user_id = ?1", user_id)
+            .map_err(|_| AppError::Database)?
+            .run()
+            .await
+            .map_err(|_| AppError::Database)?;
+        Ok(())
+    }
 }
 
 fn generate_refresh_token() -> Result<String, AppError> {
