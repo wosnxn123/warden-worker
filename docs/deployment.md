@@ -102,6 +102,11 @@ This page covers the two deployment paths. Pick the one that fits your workflow 
 - `JWT_SECRET` a long random string
 - `JWT_REFRESH_SECRET` a long random string
 
+   **Optional mobile push relay settings:**  
+     `PUSH_ENABLED=true`, `PUSH_RELAY_URI`, `PUSH_IDENTITY_URI` as text variables;  
+     `PUSH_INSTALLATION_ID`, `PUSH_INSTALLATION_KEY` as secret variables.  
+     See [Mobile Push Notifications](../README.md#mobile-push-notifications-optional) for more details.
+
 8. **Configure your Bitwarden client:**
 
    In your Bitwarden client, go to the self-hosted login screen and enter the URL of your deployed worker.
@@ -195,6 +200,10 @@ If you skip seeding, `/api/settings/domains` and `/api/sync` will return `global
    - `ALLOWED_EMAILS` your-email@example.com (supports glob patterns like `*@example.com`, comma separated)
    - `JWT_SECRET` a long random string
    - `JWT_REFRESH_SECRET` a long random string
+   - Optional mobile push settings:
+     `PUSH_ENABLED=true`, `PUSH_RELAY_URI`, `PUSH_IDENTITY_URI`, `PUSH_INSTALLATION_ID`, `PUSH_INSTALLATION_KEY`.  
+     See [Mobile Push Notifications](../README.md#mobile-push-notifications-optional) for more details.
+
 
 > [!IMPORTANT]
 > The server can't work without these three environment variables. If you forget to set them, the server will crash.

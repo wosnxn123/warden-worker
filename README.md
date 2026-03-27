@@ -16,6 +16,8 @@ Warden aims to solve this problem by leveraging the Cloudflare Workers ecosystem
 
 * **Core Vault Functionality:** Create, read, update, and delete ciphers and folders.
 * **File Attachments:** Optional Cloudflare KV or R2 storage for attachments.
+* **Device Management:** View and revoke active sessions.
+* **Live Sync & Push Notifications:** Real-time vault updates via WebSocket and mobile push.
 * **TOTP Support:** Store and generate Time-based One-Time Passwords.
 * **Bitwarden Compatible:** Works with official Bitwarden clients.
 * **Free to Host:** Runs on Cloudflare's free tier.
@@ -44,7 +46,6 @@ See the [deployment guide](docs/deployment.md) for setup details. R2 may incur a
 * Sharing
 * 2FA login (except TOTP)
 * Bitwarden Send
-* Device and session management
 * Emergency access
 * Admin operations
 * Organizations
@@ -154,7 +155,7 @@ If the binding is missing, requests proceed without rate limiting (graceful degr
 
 ## Configuration
 
-### Durable Objects (CPU Offloading)
+### CPU offloading (via Durable Objects)
 
 Cloudflare Workers Free plan has a very small per-request CPU budget. Two kinds of endpoints are particularly CPU-heavy:
 
@@ -176,7 +177,29 @@ Whether CPU-heavy endpoints are offloaded is determined by whether the `HEAVY_DO
 >
 > If you choose to disable Durable Objects, you may need subscribe to a paid plan to avoid being throttled by Cloudflare.
 
-### Environment Variables
+### Live Sync and Push Notifications
+
+Warden supports live sync for vault data via two mechanisms: WebSocket push (for desktop apps and browser extensions) and Mobile push notifications (for official mobile apps).
+
+**WebSocket Push (Desktop & Extensions)**
+
+This feature is powered by Durable Objects and enabled by default when the `NOTIFY_DO` Durable Object binding is configured in `wrangler.toml`. Removing this binding (and migration) will gracefully disable WebSocket notifications.
+
+**Mobile Push Notifications**
+
+Warden supports push notifications to official Bitwarden mobile apps via the Bitwarden push relay service.
+
+**Setup:**
+
+1. Obtain an installation ID and key from [https://bitwarden.com/host/](https://bitwarden.com/host/).
+2. Store the credentials as secrets (`PUSH_INSTALLATION_ID` & `PUSH_INSTALLATION_KEY`) via the Cloudflare dashboard or `wrangler` cli.
+3. Enable push by setting `PUSH_ENABLED` to `true` in `wrangler.toml` `[vars]` or via the Cloudflare dashboard.
+
+Optionally, you can override the default relay endpoints by setting `PUSH_RELAY_URI` and `PUSH_IDENTITY_URI` (defaults to `https://push.bitwarden.com` and `https://identity.bitwarden.com`).
+
+For detailed configuration and troubleshooting, see the [Vaultwarden wiki on push notifications](https://github.com/dani-garcia/vaultwarden/wiki/Enabling-Mobile-Client-push-notification).
+
+### Other Environment Variables
 
 Configure environment variables in `wrangler.toml` under `[vars]`, or set them via Cloudflare Dashboard:
 
