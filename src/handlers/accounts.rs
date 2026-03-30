@@ -12,7 +12,7 @@ use crate::{
     crypto::{generate_salt, hash_password_for_storage},
     db,
     error::AppError,
-    handlers::attachments,
+    handlers::{attachments, sends},
     models::{
         cipher::CipherData,
         device::Device,
@@ -617,6 +617,9 @@ pub async fn delete_account(
         attachments::delete_storage_objects(env.as_ref(), &keys).await?;
     }
 
+    // Delete all user's sends and associated storage objects
+    sends::delete_user_sends(&db, env.as_ref(), user_id).await?;
+
     // Delete all user's ciphers
     query!(&db, "DELETE FROM ciphers WHERE user_id = ?1", user_id)
         .map_err(|_| AppError::Database)?
@@ -932,6 +935,17 @@ pub async fn post_rotatekey(
     }
     db::execute_in_batches(&db, cipher_statements, batch_size).await?;
     db::execute_in_batches(&db, attachment_statements, batch_size).await?;
+
+    // Rotate sends
+    sends::rotate_user_sends(
+        &db,
+        env.as_ref(),
+        user_id,
+        &payload.account_data.sends,
+        &now,
+        batch_size,
+    )
+    .await?;
 
     // Generate new salt and hash the new password
     let new_salt = generate_salt()?;

@@ -12,7 +12,7 @@ use log;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
-use worker::{query, wasm_bindgen::JsValue, Bucket, D1Database, Env, HttpMetadata};
+use worker::{query, wasm_bindgen::JsValue, D1Database, Env, HttpMetadata};
 
 use crate::{
     auth::{Claims, JWT_VALIDATION_LEEWAY_SECS},
@@ -574,17 +574,6 @@ fn is_not_found_error(err: &worker::Error) -> bool {
     msg.contains("NoSuchKey") || msg.contains("404") || msg.contains("NotFound")
 }
 
-pub(crate) async fn delete_r2_objects(bucket: &Bucket, keys: &[String]) -> Result<(), AppError> {
-    for key in keys {
-        if let Err(err) = bucket.delete(key).await {
-            if !is_not_found_error(&err) {
-                return Err(AppError::Worker(err));
-            }
-        }
-    }
-    Ok(())
-}
-
 /// Delete objects from storage (KV or R2 based on configured backend)
 pub(crate) async fn delete_storage_objects(env: &Env, keys: &[String]) -> Result<(), AppError> {
     match get_storage_backend(env) {
@@ -603,7 +592,15 @@ pub(crate) async fn delete_storage_objects(env: &Env, keys: &[String]) -> Result
             let bucket = env
                 .bucket(ATTACHMENTS_BUCKET)
                 .map_err(|_| AppError::Internal)?;
-            delete_r2_objects(&bucket, keys).await
+            for key in keys {
+                if let Err(err) = bucket.delete(key).await {
+                    if !is_not_found_error(&err) {
+                        log::error!("R2 delete error for key '{}': {:?}", key, err);
+                        return Err(AppError::Worker(err));
+                    }
+                }
+            }
+            Ok(())
         }
         None => Ok(()), // No-op if attachments not enabled
     }
@@ -782,27 +779,8 @@ fn build_attachment_map(
     map
 }
 
-async fn upload_to_r2(
-    bucket: &Bucket,
-    key: &str,
-    content_type: Option<String>,
-    data: Vec<u8>,
-) -> Result<(), AppError> {
-    let mut builder = bucket.put(key, data);
-
-    if let Some(ct) = content_type {
-        builder = builder.http_metadata(HttpMetadata {
-            content_type: Some(ct),
-            ..Default::default()
-        });
-    }
-
-    builder.execute().await.map_err(AppError::Worker)?;
-    Ok(())
-}
-
 /// Upload data to storage (KV or R2 based on configured backend)
-async fn upload_to_storage(
+pub(crate) async fn upload_to_storage(
     env: &Env,
     key: &str,
     _content_type: Option<String>,
@@ -827,7 +805,15 @@ async fn upload_to_storage(
             let bucket = env
                 .bucket(ATTACHMENTS_BUCKET)
                 .map_err(|_| AppError::Internal)?;
-            upload_to_r2(&bucket, key, _content_type, data).await
+            let mut builder = bucket.put(key, data);
+            if let Some(ct) = _content_type {
+                builder = builder.http_metadata(HttpMetadata {
+                    content_type: Some(ct),
+                    ..Default::default()
+                });
+            }
+            builder.execute().await.map_err(AppError::Worker)?;
+            Ok(())
         }
         None => Err(AppError::BadRequest(
             "Attachments are not enabled".to_string(),

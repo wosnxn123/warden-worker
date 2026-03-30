@@ -1,4 +1,5 @@
 use axum::extract::{Query, State};
+use axum::Extension;
 use std::sync::Arc;
 use worker::Env;
 
@@ -7,14 +8,15 @@ use crate::{
     db,
     error::AppError,
     handlers::{
-        attachments, ciphers, ciphers_default_row_query, domains, sync_response_prealloc_bytes,
-        two_factor_enabled,
+        attachments, ciphers, ciphers_default_row_query, domains, sends,
+        sync_response_prealloc_bytes, two_factor_enabled,
     },
     models::{
         folder::{Folder, FolderResponse},
         sync::Profile,
         user::User,
     },
+    BaseUrl,
 };
 
 use ciphers::RawJson;
@@ -32,6 +34,7 @@ pub struct SyncQuery {
 pub async fn get_sync_data(
     claims: Claims,
     State(env): State<Arc<Env>>,
+    Extension(BaseUrl(base_url)): Extension<BaseUrl>,
     Query(query): Query<SyncQuery>,
 ) -> Result<RawJson, AppError> {
     let user_id = claims.sub;
@@ -151,7 +154,9 @@ pub async fn get_sync_data(
         response.push_str(",\"object\":\"domains\"}");
     }
 
-    response.push_str(",\"sends\":[],\"userDecryption\":");
+    response.push_str(",\"sends\":");
+    sends::append_sends_json_array(&mut response, &db, &user_id, &base_url).await?;
+    response.push_str(",\"userDecryption\":");
     response.push_str(&user_decryption_json);
     response.push_str(",\"object\":\"sync\"}");
 

@@ -52,6 +52,16 @@ struct JsCipherPublishRequest {
     context_id: Option<String>,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct JsSendPublishRequest {
+    user_id: String,
+    update_type: i32,
+    send_id: String,
+    payload_user_id: Option<String>,
+    revision_date: String,
+}
+
 impl DurableObject for NotifyDo {
     fn new(state: State, env: Env) -> Self {
         Self { state, env }
@@ -70,6 +80,7 @@ impl DurableObject for NotifyDo {
             }
             (Method::Post, "/fanout") => self.handle_fanout(&mut req).await,
             (Method::Post, "/publish-js-cipher") => self.handle_js_cipher_publish(&mut req).await,
+            (Method::Post, "/publish-js-send") => self.handle_js_send_publish(&mut req).await,
             _ => Response::error("Not found", 404),
         }
     }
@@ -235,6 +246,37 @@ impl NotifyDo {
             cmd.payload_user_id.as_deref(),
             cmd.revision_date.as_deref(),
             cmd.context_id.as_deref(),
+        )
+        .await;
+
+        Response::from_json(&stats)
+    }
+
+    // ── JS send upload path (builds WS + push in DO) ──────────────
+
+    async fn handle_js_send_publish(&self, req: &mut Request) -> Result<Response> {
+        let cmd: JsSendPublishRequest = req.json().await.map_err(|e| {
+            log::warn!("Invalid JS send publish payload: {e}");
+            worker::Error::RustError("Invalid payload".into())
+        })?;
+
+        let ws_bytes = notifications::build_send_update_message(
+            cmd.update_type,
+            &cmd.send_id,
+            cmd.payload_user_id.as_deref(),
+            &cmd.revision_date,
+        );
+
+        let selector = PublishSelector::user(&cmd.user_id);
+        let stats = self.ws_fanout(&selector, &ws_bytes);
+
+        push::push_send_update(
+            &self.env,
+            &cmd.user_id,
+            cmd.update_type,
+            &cmd.send_id,
+            cmd.payload_user_id.as_deref(),
+            &cmd.revision_date,
         )
         .await;
 

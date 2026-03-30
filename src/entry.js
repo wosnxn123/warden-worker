@@ -19,6 +19,7 @@
 
 import RustWorker from "../build/index.js";
 import { base64UrlDecode, handleAzureUpload, handleDownload } from "./attachments.js";
+import { handleSendUpload, handleSendDownload } from "./sends.js";
 
 function getBearerToken(request) {
   const auth = request.headers.get("Authorization") || request.headers.get("authorization");
@@ -149,6 +150,39 @@ function parseDownloadPath(path) {
   return null;
 }
 
+// Parse send azure-upload route: /api/sends/{send_id}/file/{file_id}/azure-upload
+function parseSendUploadPath(path) {
+  const parts = path.replace(/^\//, "").split("/");
+  // Expected: ["api", "sends", "{send_id}", "file", "{file_id}", "azure-upload"]
+  if (
+    parts.length === 6 &&
+    parts[0] === "api" &&
+    parts[1] === "sends" &&
+    parts[3] === "file" &&
+    parts[5] === "azure-upload"
+  ) {
+    return { sendId: parts[2], fileId: parts[4] };
+  }
+  return null;
+}
+
+// Parse send download route: /api/sends/{send_id}/{file_id}
+function parseSendDownloadPath(path) {
+  const parts = path.replace(/^\//, "").split("/");
+  // Expected: ["api", "sends", "{send_id}", "{file_id}"]
+  // Must NOT match /api/sends/access/... or /api/sends/file/...
+  if (
+    parts.length === 4 &&
+    parts[0] === "api" &&
+    parts[1] === "sends" &&
+    parts[2] !== "access" &&
+    parts[2] !== "file"
+  ) {
+    return { sendId: parts[2], fileId: parts[3] };
+  }
+  return null;
+}
+
 // Main fetch handler
 export default {
   async fetch(request, env, ctx) {
@@ -213,6 +247,25 @@ export default {
           token
         );
       }
+
+      // Send file upload fast-path
+      const sendParsed = parseSendUploadPath(url.pathname);
+      if (sendParsed) {
+        const token = url.searchParams.get("token");
+        if (!token) {
+          return new Response(
+            JSON.stringify({ error: "Missing upload token" }),
+            { status: 401, headers: { "Content-Type": "application/json" } }
+          );
+        }
+        return handleSendUpload(
+          request,
+          env,
+          sendParsed.sendId,
+          sendParsed.fileId,
+          token
+        );
+      }
     } else if (method === "GET") {
       const parsed = parseDownloadPath(url.pathname);
       if (parsed) {
@@ -228,6 +281,25 @@ export default {
           env,
           parsed.cipherId,
           parsed.attachmentId,
+          token
+        );
+      }
+
+      // Send file download fast-path
+      const sendParsed = parseSendDownloadPath(url.pathname);
+      if (sendParsed) {
+        const token = url.searchParams.get("t");
+        if (!token) {
+          return new Response(
+            JSON.stringify({ error: "Missing download token" }),
+            { status: 401, headers: { "Content-Type": "application/json" } }
+          );
+        }
+        return handleSendDownload(
+          request,
+          env,
+          sendParsed.sendId,
+          sendParsed.fileId,
           token
         );
       }

@@ -54,9 +54,8 @@ app-user-layout app-danger-zone button:nth-child(1),
 /* WebAuthn */
 .providers-2fa-7,
 
-/* Emergency access & Sends (not supported) */
+/* Emergency access (not supported) */
 bit-nav-item[route="settings/emergency-access"],
-bit-nav-item[route="sends"],
 
 /* Passkey settings (not supported) */
 app-user-layout app-password-settings app-webauthn-login-settings {

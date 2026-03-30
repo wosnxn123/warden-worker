@@ -7,7 +7,7 @@ use worker::Env;
 
 use crate::handlers::{
     accounts, attachments, ciphers, config, devices, domains, emergency_access, folders, identity,
-    import, meta, sync, twofactor, webauth,
+    import, meta, sends, sync, twofactor, webauth,
 };
 
 pub fn api_router(env: Env) -> Router {
@@ -140,6 +140,28 @@ pub fn api_router(env: Env) -> Router {
         .route("/api/folders/{id}", put(folders::update_folder))
         .route("/api/folders/{id}", delete(folders::delete_folder))
         .route("/api/folders/{id}/delete", post(folders::delete_folder))
+        // Sends
+        .route("/api/sends", get(sends::list_sends))
+        .route("/api/sends", post(sends::create_text_send))
+        .route("/api/sends/file/v2", post(sends::create_file_send_v2))
+        .route("/api/sends/file", post(sends::create_file_send_legacy))
+        .route(
+            "/api/sends/{send_id}/file/{file_id}",
+            post(sends::upload_file_send_direct),
+        )
+        .route("/api/sends/{send_id}", get(sends::get_send))
+        .route("/api/sends/{send_id}", put(sends::update_send))
+        .route("/api/sends/{send_id}", delete(sends::delete_send))
+        .route(
+            "/api/sends/{send_id}/remove-password",
+            put(sends::remove_password),
+        )
+        // Send anonymous access (no auth required)
+        .route("/api/sends/access/{access_id}", post(sends::access_send))
+        .route(
+            "/api/sends/{send_id}/access/file/{file_id}",
+            post(sends::access_file_send),
+        )
         .route("/api/config", get(config::config))
         // Meta endpoints (mirrors a subset of vaultwarden core/mod.rs)
         .route("/api/alive", get(meta::alive))

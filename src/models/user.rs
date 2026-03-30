@@ -334,6 +334,8 @@ pub struct RotateAccountKeys {
 pub struct RotateAccountData {
     pub ciphers: Vec<crate::models::cipher::CipherRequestData>,
     pub folders: Vec<RotateFolderData>,
+    #[serde(default)]
+    pub sends: Vec<crate::models::send::SendRequestData>,
 }
 
 #[derive(Debug, Deserialize)]
