@@ -4,6 +4,7 @@ use serde_json::Value;
 use uuid::Uuid;
 use worker::{query, D1Database};
 
+use crate::models::attachment::display_size;
 use crate::{db, error::AppError};
 
 pub const SEND_TYPE_TEXT: i32 = 0;
@@ -181,14 +182,22 @@ impl SendDB {
 // ── JSON serialization ──────────────────────────────────────────────
 
 impl SendDB {
-    /// Convert `size` from number to string for mobile client compatibility.
+    /// Convert `size` to string for mobile client compatibility and backfill
+    /// `sizeName` using Vaultwarden's display format.
     fn normalize_data(data: &mut Value) {
-        if let Some(size) = data.get("size").and_then(|v| v.as_i64()) {
-            data["size"] = Value::String(size.to_string());
+        let size = data.get("size").and_then(|value| match value {
+            Value::Number(number) => number.as_i64(),
+            Value::String(text) => text.parse::<i64>().ok(),
+            _ => None,
+        });
+
+        if let (Some(size), Some(object)) = (size, data.as_object_mut()) {
+            object.insert("size".into(), Value::String(size.to_string()));
+            object.insert("sizeName".into(), Value::String(display_size(size)));
         }
     }
 
-    pub fn to_json(&self, base_url: &str) -> Value {
+    pub fn to_json(&self) -> Value {
         let mut data: Value = serde_json::from_str(&self.data).unwrap_or(Value::Null);
         Self::normalize_data(&mut data);
 
@@ -217,17 +226,7 @@ impl SendDB {
             }
             SEND_TYPE_FILE => {
                 json["text"] = Value::Null;
-                if let Some(file_id) = data.get("id").and_then(|v| v.as_str()) {
-                    let base = base_url.trim_end_matches('/');
-                    let url = format!("{base}/api/sends/{}/file/{file_id}", self.id);
-                    let mut f = data;
-                    if let Some(obj) = f.as_object_mut() {
-                        obj.insert("url".into(), Value::String(url));
-                    }
-                    json["file"] = f;
-                } else {
-                    json["file"] = data;
-                }
+                json["file"] = data;
             }
             _ => {
                 json["text"] = Value::Null;
@@ -684,9 +683,8 @@ pub fn validate_send_dates(
         ));
     }
 
-    let max_future = now
-        + TimeDelta::try_days(MAX_DELETION_DAYS)
-            .ok_or_else(|| AppError::Internal)?;
+    let max_future =
+        now + TimeDelta::try_days(MAX_DELETION_DAYS).ok_or_else(|| AppError::Internal)?;
     if del > max_future {
         return Err(AppError::BadRequest(format!(
             "Deletion date cannot be more than {MAX_DELETION_DAYS} days in the future"

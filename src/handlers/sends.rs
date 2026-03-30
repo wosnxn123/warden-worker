@@ -20,6 +20,7 @@ use crate::{
         attachments_enabled, delete_storage_objects, is_kv_backend, upload_to_storage,
     },
     handlers::get_env_usize,
+    models::attachment::display_size,
     models::send::{validate_send_dates, SendDB, SendRequestData, SEND_TYPE_FILE, SEND_TYPE_TEXT},
     notifications::{self, UpdateType},
     BaseUrl,
@@ -243,11 +244,10 @@ async fn resolve_creator_identifier(db: &D1Database, send: &SendDB) -> Option<St
 pub async fn list_sends(
     claims: Claims,
     State(env): State<Arc<Env>>,
-    Extension(BaseUrl(base_url)): Extension<BaseUrl>,
 ) -> Result<Json<Value>, AppError> {
     let db = db::get_db(&env)?;
     let sends = SendDB::find_by_user(&db, &claims.sub).await?;
-    let list: Vec<Value> = sends.iter().map(|s| s.to_json(&base_url)).collect();
+    let list: Vec<Value> = sends.iter().map(SendDB::to_json).collect();
     Ok(Json(serde_json::json!({
         "data": list,
         "object": "list",
@@ -261,14 +261,13 @@ pub async fn list_sends(
 pub async fn get_send(
     claims: Claims,
     State(env): State<Arc<Env>>,
-    Extension(BaseUrl(base_url)): Extension<BaseUrl>,
     Path(send_id): Path<String>,
 ) -> Result<Json<Value>, AppError> {
     let db = db::get_db(&env)?;
     let send = SendDB::find_by_id_and_user(&db, &send_id, &claims.sub)
         .await?
         .ok_or_else(|| AppError::NotFound("Send not found".into()))?;
-    Ok(Json(send.to_json(&base_url)))
+    Ok(Json(send.to_json()))
 }
 
 // ── POST /api/sends (text send) ─────────────────────────────────────
@@ -277,7 +276,6 @@ pub async fn get_send(
 pub async fn create_text_send(
     claims: Claims,
     State(env): State<Arc<Env>>,
-    Extension(BaseUrl(base_url)): Extension<BaseUrl>,
     Json(payload): Json<SendRequestData>,
 ) -> Result<Json<Value>, AppError> {
     if payload.send_type != SEND_TYPE_TEXT {
@@ -312,7 +310,7 @@ pub async fn create_text_send(
     )
     .await;
 
-    Ok(Json(send.to_json(&base_url)))
+    Ok(Json(send.to_json()))
 }
 
 // ── POST /api/sends/file/v2 (preferred file send creation) ──────────
@@ -377,6 +375,7 @@ pub async fn create_file_send_v2(
         "id": file_id,
         "fileName": file_name,
         "size": declared_size,
+        "sizeName": display_size(declared_size),
     });
     let data = serde_json::to_string(&file_data).map_err(|_| AppError::Internal)?;
 
@@ -393,7 +392,7 @@ pub async fn create_file_send_v2(
         &claims.client_id,
     )?;
 
-    let send_response = send.to_json(&base_url);
+    let send_response = send.to_json();
 
     Ok(Json(SendFileUploadResponse {
         object: "send-fileUpload".into(),
@@ -409,7 +408,6 @@ pub async fn create_file_send_v2(
 pub async fn create_file_send_legacy(
     claims: Claims,
     State(env): State<Arc<Env>>,
-    Extension(BaseUrl(base_url)): Extension<BaseUrl>,
     mut multipart: Multipart,
 ) -> Result<Json<Value>, AppError> {
     if !attachments_enabled(&env) {
@@ -490,6 +488,7 @@ pub async fn create_file_send_legacy(
         "id": file_id,
         "fileName": file_name,
         "size": actual_size,
+        "sizeName": display_size(actual_size),
     });
     let data = serde_json::to_string(&file_data).map_err(|_| AppError::Internal)?;
 
@@ -511,7 +510,7 @@ pub async fn create_file_send_legacy(
     )
     .await;
 
-    Ok(Json(send.to_json(&base_url)))
+    Ok(Json(send.to_json()))
 }
 
 // ── POST /api/sends/{send_id}/file/{file_id} (Direct upload compat) ─
@@ -520,7 +519,6 @@ pub async fn create_file_send_legacy(
 pub async fn upload_file_send_direct(
     claims: Claims,
     State(env): State<Arc<Env>>,
-    Extension(BaseUrl(base_url)): Extension<BaseUrl>,
     Path((send_id, file_id)): Path<(String, String)>,
     mut multipart: Multipart,
 ) -> Result<Json<Value>, AppError> {
@@ -587,7 +585,7 @@ pub async fn upload_file_send_direct(
     )
     .await;
 
-    Ok(Json(pending.to_json(&base_url)))
+    Ok(Json(pending.to_json()))
 }
 
 // ── PUT /api/sends/{send_id} ────────────────────────────────────────
@@ -596,7 +594,6 @@ pub async fn upload_file_send_direct(
 pub async fn update_send(
     claims: Claims,
     State(env): State<Arc<Env>>,
-    Extension(BaseUrl(base_url)): Extension<BaseUrl>,
     Path(send_id): Path<String>,
     Json(payload): Json<SendRequestData>,
 ) -> Result<Json<Value>, AppError> {
@@ -640,7 +637,7 @@ pub async fn update_send(
     )
     .await;
 
-    Ok(Json(send.to_json(&base_url)))
+    Ok(Json(send.to_json()))
 }
 
 // ── DELETE /api/sends/{send_id} ─────────────────────────────────────
@@ -682,7 +679,6 @@ pub async fn delete_send(
 pub async fn remove_password(
     claims: Claims,
     State(env): State<Arc<Env>>,
-    Extension(BaseUrl(base_url)): Extension<BaseUrl>,
     Path(send_id): Path<String>,
 ) -> Result<Json<Value>, AppError> {
     let db = db::get_db(&env)?;
@@ -702,7 +698,7 @@ pub async fn remove_password(
     )
     .await;
 
-    Ok(Json(send.to_json(&base_url)))
+    Ok(Json(send.to_json()))
 }
 
 // ── POST /api/sends/access/{access_id} (anonymous access) ──────────
@@ -731,7 +727,7 @@ pub async fn access_send(
         let pw = payload
             .password
             .as_deref()
-            .ok_or_else(|| AppError::BadRequest("Password required".into()))?;
+            .ok_or_else(|| AppError::Unauthorized("Password required".into()))?;
         if !send.check_password(pw).await? {
             return Err(AppError::Unauthorized("Invalid password".into()));
         }
@@ -899,10 +895,9 @@ pub async fn append_sends_json_array(
     out: &mut String,
     db: &D1Database,
     user_id: &str,
-    base_url: &str,
 ) -> Result<(), AppError> {
     let sends = SendDB::find_by_user(db, user_id).await?;
-    let list: Vec<Value> = sends.iter().map(|s| s.to_json(base_url)).collect();
+    let list: Vec<Value> = sends.iter().map(SendDB::to_json).collect();
     let json = serde_json::to_string(&list).map_err(|_| AppError::Internal)?;
     out.push_str(&json);
     Ok(())
