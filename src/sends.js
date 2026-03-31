@@ -60,7 +60,7 @@ export async function handleSendUpload(request, env, sendId, fileId, token) {
   if (pendingData.id !== fileId) return jsonError("File ID mismatch", 400);
 
   const declaredSize = pendingData.size;
-  if (typeof declaredSize !== "number" || declaredSize <= 0) {
+  if (typeof declaredSize !== "number" || declaredSize < 0) {
     return jsonError("Invalid declared file size in pending send", 400);
   }
 
@@ -137,6 +137,8 @@ export async function handleSendUpload(request, env, sendId, fileId, token) {
  * Handle Send file download: GET /api/sends/{sendId}/{fileId}?t=...
  */
 export async function handleSendDownload(request, env, sendId, fileId, token) {
+  const notFound = () => new Response(null, { status: 404 });
+
   const backend = getStorageBackend(env);
   if (!backend) return jsonError("File storage is not enabled", 400);
 
@@ -147,14 +149,15 @@ export async function handleSendDownload(request, env, sendId, fileId, token) {
   try {
     claims = await verifyHs256Jwt(token, getJwtSecret(env));
   } catch (err) {
-    return invalidTokenResponse("sends.download", err);
+    console.warn(`[sends.download] Invalid token: ${err?.message || err}`);
+    return notFound();
   }
 
   if (claims.send_id !== sendId || claims.file_id !== fileId) {
-    return invalidTokenResponse(
-      "sends.download",
-      `claims mismatch: expected send_id=${sendId}, file_id=${fileId}; got send_id=${claims.send_id}, file_id=${claims.file_id}`
+    console.warn(
+      `[sends.download] Claims mismatch: expected send_id=${sendId}, file_id=${fileId}; got send_id=${claims.send_id}, file_id=${claims.file_id}`
     );
+    return notFound();
   }
 
   const send = await db
@@ -162,7 +165,7 @@ export async function handleSendDownload(request, env, sendId, fileId, token) {
     .bind(sendId)
     .first();
 
-  if (!send) return jsonError("Send not found", 404);
+  if (!send) return notFound();
 
   const storageKey = `sends/${sendId}/${fileId}`;
   let fileSize = null;
@@ -180,6 +183,6 @@ export async function handleSendDownload(request, env, sendId, fileId, token) {
     storageKey,
     fallbackSize: fileSize,
   });
-  if (!response) return jsonError("File not found in storage", 404);
+  if (!response) return notFound();
   return response;
 }

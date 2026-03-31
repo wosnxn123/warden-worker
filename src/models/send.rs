@@ -4,11 +4,13 @@ use serde_json::Value;
 use uuid::Uuid;
 use worker::{query, D1Database};
 
+use crate::handlers::attachments::NumberOrString;
 use crate::models::attachment::display_size;
 use crate::{db, error::AppError};
 
 pub const SEND_TYPE_TEXT: i32 = 0;
 pub const SEND_TYPE_FILE: i32 = 1;
+pub const SEND_INACCESSIBLE_MSG: &str = "Send does not exist or is no longer available";
 
 const SEND_PBKDF2_ITERATIONS: u32 = 100_000;
 
@@ -40,6 +42,7 @@ pub struct SendDB {
 // ── Constructor & field mutators ────────────────────────────────────
 
 impl SendDB {
+
     pub fn new(
         user_id: String,
         send_type: i32,
@@ -137,26 +140,24 @@ impl SendDB {
     /// Validate that this send can be accessed.
     pub fn validate_access(&self) -> Result<(), AppError> {
         if self.disabled != 0 {
-            return Err(AppError::BadRequest("Send is disabled".into()));
+            return Err(inaccessible_error());
         }
 
-        let now = Utc::now().to_rfc3339();
+        let now = db::now_string();
 
         if self.deletion_date <= now {
-            return Err(AppError::NotFound("Send has been deleted".into()));
+            return Err(inaccessible_error());
         }
 
         if let Some(ref exp) = self.expiration_date {
             if exp <= &now {
-                return Err(AppError::BadRequest("Send has expired".into()));
+                return Err(inaccessible_error());
             }
         }
 
         if let Some(max) = self.max_access_count {
             if self.access_count >= max {
-                return Err(AppError::BadRequest(
-                    "Send has reached maximum access count".into(),
-                ));
+                return Err(inaccessible_error());
             }
         }
 
@@ -181,6 +182,31 @@ impl SendDB {
 
 // ── JSON serialization ──────────────────────────────────────────────
 
+/// Lowercase the first character of all object keys (recursive), matching
+/// Vaultwarden's `LowerCase` deserialization for client interop.
+fn lowercase_first_char_keys(value: Value) -> Value {
+    match value {
+        Value::Object(map) => {
+            let mut new_map = serde_json::Map::with_capacity(map.len());
+            for (k, v) in map {
+                let new_key = lowercase_first_char(&k);
+                new_map.insert(new_key, lowercase_first_char_keys(v));
+            }
+            Value::Object(new_map)
+        }
+        Value::Array(arr) => Value::Array(arr.into_iter().map(lowercase_first_char_keys).collect()),
+        other => other,
+    }
+}
+
+fn lowercase_first_char(s: &str) -> String {
+    let mut chars = s.chars();
+    match chars.next() {
+        Some(c) => c.to_lowercase().to_string() + chars.as_str(),
+        None => String::new(),
+    }
+}
+
 impl SendDB {
     /// Convert `size` to string for mobile client compatibility and backfill
     /// `sizeName` using Vaultwarden's display format.
@@ -198,7 +224,8 @@ impl SendDB {
     }
 
     pub fn to_json(&self) -> Value {
-        let mut data: Value = serde_json::from_str(&self.data).unwrap_or(Value::Null);
+        let mut data: Value =
+            serde_json::from_str(&self.data).map(lowercase_first_char_keys).unwrap_or(Value::Null);
         Self::normalize_data(&mut data);
 
         let mut json = serde_json::json!({
@@ -238,7 +265,8 @@ impl SendDB {
     }
 
     pub fn to_access_json(&self, creator_identifier: Option<&str>) -> Value {
-        let mut data: Value = serde_json::from_str(&self.data).unwrap_or(Value::Null);
+        let mut data: Value =
+            serde_json::from_str(&self.data).map(lowercase_first_char_keys).unwrap_or(Value::Null);
         Self::normalize_data(&mut data);
 
         let mut json = serde_json::json!({
@@ -357,6 +385,21 @@ impl SendDB {
         Ok(())
     }
 
+    /// Update only `updated_at` (revision bump without changing other fields).
+    pub async fn touch(&mut self, db: &D1Database) -> Result<(), AppError> {
+        self.updated_at = db::now_string();
+        query!(
+            db,
+            "UPDATE sends SET updated_at = ?1 WHERE id = ?2",
+            self.updated_at,
+            self.id
+        )
+        .map_err(|_| AppError::Database)?
+        .run()
+        .await?;
+        Ok(())
+    }
+
     pub async fn remove_password(&mut self, db: &D1Database) -> Result<(), AppError> {
         self.set_password(None).await?;
         self.updated_at = db::now_string();
@@ -399,7 +442,9 @@ impl SendDB {
         db: &D1Database,
         access_id: &str,
     ) -> Result<Option<Self>, AppError> {
-        let uuid = uuid_from_access_id(access_id)?;
+        let Ok(uuid) = uuid_from_access_id(access_id) else {
+            return Ok(None);
+        };
         Self::find_by_id(db, &uuid).await
     }
 
@@ -634,46 +679,40 @@ pub struct SendRequestData {
     pub notes: Option<String>,
     pub text: Option<Value>,
     pub file: Option<Value>,
-    pub file_length: Option<SendFileLength>,
+    pub file_length: Option<NumberOrString>,
     pub password: Option<String>,
-    pub max_access_count: Option<i32>,
+    pub max_access_count: Option<NumberOrString>,
     pub expiration_date: Option<String>,
     pub deletion_date: String,
     pub disabled: Option<bool>,
     pub hide_email: Option<bool>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum SendFileLength {
-    Number(i64),
-    String(String),
-}
-
-impl SendFileLength {
-    pub fn into_i64(self) -> Result<i64, AppError> {
-        match self {
-            SendFileLength::Number(v) => Ok(v),
-            SendFileLength::String(s) => s
-                .parse::<i64>()
-                .map_err(|_| AppError::BadRequest("Invalid file size".into())),
-        }
-    }
-}
-
 const MAX_DELETION_DAYS: i64 = 31;
 
+fn normalize_datetime(s: &str) -> Result<chrono::DateTime<Utc>, AppError> {
+    use chrono::DateTime;
+    DateTime::parse_from_rfc3339(s)
+        .or_else(|_| DateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S%.fZ"))
+        .map(|dt| dt.with_timezone(&Utc))
+        .map_err(|_| AppError::BadRequest(format!("Invalid date format: {s}")))
+}
+
+/// Normalize a date-time string to a consistent format matching `db::now_string()`.
+fn format_normalized(dt: &chrono::DateTime<Utc>) -> String {
+    dt.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string()
+}
+
 /// Parse and validate deletion_date / expiration_date from client strings.
+/// Returns `(normalized_deletion_date, normalized_expiration_date)` on success.
 pub fn validate_send_dates(
     deletion_date: &str,
     expiration_date: Option<&str>,
-) -> Result<(), AppError> {
-    use chrono::{DateTime, TimeDelta};
+) -> Result<(String, Option<String>), AppError> {
+    use chrono::TimeDelta;
 
-    let del = DateTime::parse_from_rfc3339(deletion_date)
-        .or_else(|_| DateTime::parse_from_str(deletion_date, "%Y-%m-%dT%H:%M:%S%.fZ"))
-        .map_err(|_| AppError::BadRequest("Invalid deletion date format".into()))?
-        .with_timezone(&Utc);
+    let del = normalize_datetime(deletion_date)
+        .map_err(|_| AppError::BadRequest("Invalid deletion date format".into()))?;
 
     let now = Utc::now();
 
@@ -686,16 +725,14 @@ pub fn validate_send_dates(
     let max_future =
         now + TimeDelta::try_days(MAX_DELETION_DAYS).ok_or_else(|| AppError::Internal)?;
     if del > max_future {
-        return Err(AppError::BadRequest(format!(
-            "Deletion date cannot be more than {MAX_DELETION_DAYS} days in the future"
-        )));
+        return Err(AppError::BadRequest(
+            "You cannot have a Send with a deletion date that far into the future. Adjust the Deletion Date to a value less than 31 days from now and try again.".into(),
+        ));
     }
 
-    if let Some(exp_str) = expiration_date {
-        let exp = DateTime::parse_from_rfc3339(exp_str)
-            .or_else(|_| DateTime::parse_from_str(exp_str, "%Y-%m-%dT%H:%M:%S%.fZ"))
-            .map_err(|_| AppError::BadRequest("Invalid expiration date format".into()))?
-            .with_timezone(&Utc);
+    let normalized_exp = if let Some(exp_str) = expiration_date {
+        let exp = normalize_datetime(exp_str)
+            .map_err(|_| AppError::BadRequest("Invalid expiration date format".into()))?;
 
         if exp <= now {
             return Err(AppError::BadRequest(
@@ -708,9 +745,13 @@ pub fn validate_send_dates(
                 "Expiration date must be before deletion date".into(),
             ));
         }
-    }
 
-    Ok(())
+        Some(format_normalized(&exp))
+    } else {
+        None
+    };
+
+    Ok((format_normalized(&del), normalized_exp))
 }
 
 // ── accessId helpers ────────────────────────────────────────────────
@@ -742,4 +783,10 @@ pub fn uuid_from_access_id(access_id: &str) -> Result<String, AppError> {
         &hex[16..20],
         &hex[20..32]
     ))
+}
+
+// ── Error helpers ─────────────────────────────────────────────
+
+fn inaccessible_error() -> AppError {
+    AppError::NotFound(SEND_INACCESSIBLE_MSG.into())
 }

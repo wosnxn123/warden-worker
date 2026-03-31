@@ -162,7 +162,7 @@ const FAST_PATH_ROUTES = [
     method: "GET",
     pattern: ["api", "sends", { name: "sendId", exclude: ["access", "file"] }, { name: "fileId" }],
     tokenParam: "t",
-    missingTokenMessage: "Missing download token",
+    tokenRequired: false,
     handler: (request, env, params, token) =>
       handleSendDownload(request, env, params.sendId, params.fileId, token),
   },
@@ -180,8 +180,8 @@ function dispatchFastPath(request, env, url, method) {
     }
 
     const token = url.searchParams.get(route.tokenParam);
-    if (!token) {
-      return jsonError(route.missingTokenMessage, 401);
+    if (!token && route.tokenRequired !== false) {
+      return jsonError(route.missingTokenMessage || "Missing token", 401);
     }
 
     return route.handler(request, env, params, token);

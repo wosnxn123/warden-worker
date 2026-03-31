@@ -86,7 +86,7 @@ pub struct AttachmentDeleteResponse {
     pub cipher: Cipher,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone,Debug,Deserialize)]
 #[serde(untagged)]
 pub enum NumberOrString {
     Number(i64),
@@ -112,9 +112,20 @@ impl NumberOrString {
     pub fn into_i64(self) -> Result<i64, AppError> {
         match self {
             NumberOrString::Number(v) => Ok(v),
-            NumberOrString::String(v) => v
+            NumberOrString::String(s) => s
                 .parse::<i64>()
-                .map_err(|_| AppError::BadRequest("Invalid attachment size".to_string())),
+                .map_err(|_| AppError::BadRequest("Invalid number".into())),
+        }
+    }
+
+    #[allow(clippy::wrong_self_convention)]
+    pub fn into_i32(&self) -> Result<i32, AppError> {
+        match self {
+            NumberOrString::Number(n) => i32::try_from(*n)
+                .map_err(|_| AppError::BadRequest("Number does not fit in i32".into())),
+            NumberOrString::String(s) => s
+                .parse::<i32>()
+                .map_err(|_| AppError::BadRequest("Can't convert to number".into())),
         }
     }
 }

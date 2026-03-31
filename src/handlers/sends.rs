@@ -21,7 +21,10 @@ use crate::{
     },
     handlers::get_env_usize,
     models::attachment::display_size,
-    models::send::{validate_send_dates, SendDB, SendRequestData, SEND_TYPE_FILE, SEND_TYPE_TEXT},
+    models::send::{
+        validate_send_dates, SendDB, SendRequestData, SEND_INACCESSIBLE_MSG, SEND_TYPE_FILE,
+        SEND_TYPE_TEXT,
+    },
     notifications::{self, UpdateType},
     BaseUrl,
 };
@@ -167,41 +170,63 @@ fn upload_url(
 // ── Helpers ─────────────────────────────────────────────────────────
 
 fn prepare_send_data(payload: &SendRequestData) -> Result<String, AppError> {
-    match payload.send_type {
-        SEND_TYPE_TEXT => serde_json::to_string(&payload.text).map_err(|_| AppError::Internal),
-        SEND_TYPE_FILE => serde_json::to_string(&payload.file).map_err(|_| AppError::Internal),
-        _ => Err(AppError::BadRequest("Unsupported send type".into())),
-    }
+    let data_val = match payload.send_type {
+        SEND_TYPE_TEXT => payload.text.clone(),
+        SEND_TYPE_FILE => payload.file.clone(),
+        _ => return Err(AppError::BadRequest("Unsupported send type".into())),
+    };
+
+    let mut d = data_val.ok_or_else(|| AppError::BadRequest("Send data not provided".into()))?;
+    d.as_object_mut().and_then(|o| o.remove("response"));
+    serde_json::to_string(&d).map_err(|_| AppError::Internal)
 }
 
 /// Build a `SendDB` from request payload, setting all common fields.
-fn build_send(user_id: String, payload: &SendRequestData, data: String) -> SendDB {
+fn build_send(
+    user_id: String,
+    payload: &SendRequestData,
+    data: String,
+    deletion_date: String,
+    expiration_date: Option<String>,
+) -> Result<SendDB, AppError> {
     let mut send = SendDB::new(
         user_id,
         payload.send_type,
         payload.name.clone(),
         data,
         payload.key.clone(),
-        payload.deletion_date.clone(),
+        deletion_date,
     );
     send.notes = payload.notes.clone();
-    send.max_access_count = payload.max_access_count;
-    send.expiration_date = payload.expiration_date.clone();
+    send.max_access_count = match &payload.max_access_count {
+        Some(m) => Some(m.into_i32()?),
+        None => None,
+    };
+    send.expiration_date = expiration_date;
     send.disabled = payload.disabled.unwrap_or(false) as i32;
     send.hide_email = payload.hide_email.map(|v| v as i32);
-    send
+    Ok(send)
 }
 
 /// Apply mutable fields from request to an existing send (for update).
-fn apply_update(send: &mut SendDB, payload: &SendRequestData) {
+fn apply_update(
+    send: &mut SendDB,
+    payload: &SendRequestData,
+    deletion_date: String,
+    expiration_date: Option<String>,
+) -> Result<(), AppError> {
     send.name = payload.name.clone();
     send.akey = payload.key.clone();
     send.notes = payload.notes.clone();
-    send.max_access_count = payload.max_access_count;
-    send.expiration_date = payload.expiration_date.clone();
-    send.deletion_date = payload.deletion_date.clone();
+    send.max_access_count = match &payload.max_access_count {
+        Some(m) => Some(m.into_i32()?),
+        None => None,
+    };
+    send.expiration_date = expiration_date;
+    send.deletion_date = deletion_date;
     send.disabled = payload.disabled.unwrap_or(false) as i32;
     send.hide_email = payload.hide_email.map(|v| v as i32);
+    Ok(())
 }
 
 async fn publish_send_notification(
@@ -266,7 +291,7 @@ pub async fn get_send(
     let db = db::get_db(&env)?;
     let send = SendDB::find_by_id_and_user(&db, &send_id, &claims.sub)
         .await?
-        .ok_or_else(|| AppError::NotFound("Send not found".into()))?;
+        .ok_or_else(|| AppError::BadRequest("Send not found".into()))?;
     Ok(Json(send.to_json()))
 }
 
@@ -284,7 +309,8 @@ pub async fn create_text_send(
         ));
     }
 
-    validate_send_dates(&payload.deletion_date, payload.expiration_date.as_deref())?;
+    let (del, exp) =
+        validate_send_dates(&payload.deletion_date, payload.expiration_date.as_deref())?;
 
     let data = prepare_send_data(&payload)?;
     let text_limit = send_text_max_bytes(&env);
@@ -294,7 +320,7 @@ pub async fn create_text_send(
         )));
     }
 
-    let mut send = build_send(claims.sub.clone(), &payload, data);
+    let mut send = build_send(claims.sub.clone(), &payload, data, del, exp)?;
     send.set_password(payload.password.as_deref()).await?;
 
     let db = db::get_db(&env)?;
@@ -323,30 +349,24 @@ pub async fn create_file_send_v2(
     Json(payload): Json<SendRequestData>,
 ) -> Result<Json<SendFileUploadResponse>, AppError> {
     if payload.send_type != SEND_TYPE_FILE {
-        return Err(AppError::BadRequest("Expected file send type".into()));
+        return Err(AppError::BadRequest("Send content is not a file".into()));
     }
 
     if !attachments_enabled(&env) {
         return Err(AppError::BadRequest("File storage is not enabled".into()));
     }
 
-    validate_send_dates(&payload.deletion_date, payload.expiration_date.as_deref())?;
-
-    let file_name = payload
-        .file
-        .as_ref()
-        .and_then(|f| f.get("fileName").and_then(|v| v.as_str()))
-        .ok_or_else(|| AppError::BadRequest("Missing file name".into()))?
-        .to_string();
+    let (del, exp) =
+        validate_send_dates(&payload.deletion_date, payload.expiration_date.as_deref())?;
 
     let declared_size: i64 = payload
         .file_length
         .clone()
-        .ok_or_else(|| AppError::BadRequest("Missing file length".into()))?
+        .ok_or_else(|| AppError::BadRequest("Invalid send length".into()))?
         .into_i64()?;
 
-    if declared_size <= 0 {
-        return Err(AppError::BadRequest("File size must be positive".into()));
+    if declared_size < 0 {
+        return Err(AppError::BadRequest("Send size can't be negative".into()));
     }
 
     let max = send_max_bytes(&env);
@@ -371,15 +391,18 @@ pub async fn create_file_send_v2(
     }
 
     let file_id = uuid::Uuid::new_v4().to_string();
-    let file_data = serde_json::json!({
-        "id": file_id,
-        "fileName": file_name,
-        "size": declared_size,
-        "sizeName": display_size(declared_size),
-    });
+
+    let data = prepare_send_data(&payload)?;
+    let mut file_data: Value =
+        serde_json::from_str(&data).map_err(|_| AppError::Internal)?;
+    if let Some(o) = file_data.as_object_mut() {
+        o.insert("id".into(), Value::String(file_id.clone()));
+        o.insert("size".into(), serde_json::json!(declared_size));
+        o.insert("sizeName".into(), Value::String(display_size(declared_size)));
+    }
     let data = serde_json::to_string(&file_data).map_err(|_| AppError::Internal)?;
 
-    let mut send = build_send(claims.sub.clone(), &payload, data);
+    let mut send = build_send(claims.sub.clone(), &payload, data, del, exp)?;
     send.set_password(payload.password.as_deref()).await?;
     send.insert_pending(&db).await?;
 
@@ -424,7 +447,7 @@ pub async fn create_file_send_legacy(
         .map_err(|_| AppError::BadRequest("Invalid multipart data".into()))?
     {
         match field.name() {
-            Some("model") | Some("data") => {
+            Some("model") => {
                 model_json = Some(
                     field
                         .text()
@@ -432,7 +455,7 @@ pub async fn create_file_send_legacy(
                         .map_err(|_| AppError::BadRequest("Invalid model field".into()))?,
                 );
             }
-            Some("file") => {
+            Some("data") | Some("file") => {
                 content_type = field.content_type().map(|s| s.to_string());
                 file_bytes = Some(
                     field
@@ -450,17 +473,14 @@ pub async fn create_file_send_legacy(
         .map_err(|_| AppError::BadRequest("Invalid send data".into()))?;
 
     if payload.send_type != SEND_TYPE_FILE {
-        return Err(AppError::BadRequest("Expected file send type".into()));
+        return Err(AppError::BadRequest("Send content is not a file".into()));
     }
 
-    validate_send_dates(&payload.deletion_date, payload.expiration_date.as_deref())?;
+    let (del, exp) =
+        validate_send_dates(&payload.deletion_date, payload.expiration_date.as_deref())?;
 
     let file_bytes = file_bytes.ok_or_else(|| AppError::BadRequest("Missing file data".into()))?;
     let actual_size = file_bytes.len() as i64;
-
-    if actual_size <= 0 {
-        return Err(AppError::BadRequest("File size must be positive".into()));
-    }
 
     let max = send_max_bytes(&env);
     if actual_size > max {
@@ -476,23 +496,19 @@ pub async fn create_file_send_legacy(
         }
     }
 
-    let file_name = payload
-        .file
-        .as_ref()
-        .and_then(|f| f.get("fileName").and_then(|v| v.as_str()))
-        .unwrap_or("unnamed")
-        .to_string();
-
     let file_id = uuid::Uuid::new_v4().to_string();
-    let file_data = serde_json::json!({
-        "id": file_id,
-        "fileName": file_name,
-        "size": actual_size,
-        "sizeName": display_size(actual_size),
-    });
+
+    let data = prepare_send_data(&payload)?;
+    let mut file_data: Value =
+        serde_json::from_str(&data).map_err(|_| AppError::Internal)?;
+    if let Some(o) = file_data.as_object_mut() {
+        o.insert("id".into(), Value::String(file_id.clone()));
+        o.insert("size".into(), serde_json::json!(actual_size));
+        o.insert("sizeName".into(), Value::String(display_size(actual_size)));
+    }
     let data = serde_json::to_string(&file_data).map_err(|_| AppError::Internal)?;
 
-    let mut send = build_send(claims.sub.clone(), &payload, data);
+    let mut send = build_send(claims.sub.clone(), &payload, data, del, exp)?;
     send.set_password(payload.password.as_deref()).await?;
 
     let storage_key = format!("sends/{}/{file_id}", send.id);
@@ -521,7 +537,7 @@ pub async fn upload_file_send_direct(
     State(env): State<Arc<Env>>,
     Path((send_id, file_id)): Path<(String, String)>,
     mut multipart: Multipart,
-) -> Result<Json<Value>, AppError> {
+) -> Result<(), AppError> {
     if !attachments_enabled(&env) {
         return Err(AppError::BadRequest("File storage is not enabled".into()));
     }
@@ -530,11 +546,13 @@ pub async fn upload_file_send_direct(
 
     let mut pending = SendDB::find_pending_by_id_and_user(&db, &send_id, &claims.sub)
         .await?
-        .ok_or_else(|| AppError::NotFound("Pending send not found or already uploaded".into()))?;
+        .ok_or_else(|| AppError::BadRequest("Send not found. Unable to save the file.".into()))?;
 
     let expected_file_id = pending.file_id().ok_or_else(|| AppError::Internal)?;
     if expected_file_id != file_id {
-        return Err(AppError::BadRequest("File ID mismatch".into()));
+        return Err(AppError::BadRequest(
+            "Send file does not match send data.".into(),
+        ));
     }
 
     let mut file_bytes: Option<Bytes> = None;
@@ -565,9 +583,9 @@ pub async fn upload_file_send_direct(
         .ok_or_else(|| AppError::Internal)?;
 
     if actual_size != declared_size {
-        return Err(AppError::BadRequest(format!(
-            "Uploaded size ({actual_size}) does not match declared size ({declared_size})"
-        )));
+        return Err(AppError::BadRequest(
+            "Send file size does not match.".into(),
+        ));
     }
 
     let storage_key = pending.storage_key().ok_or_else(|| AppError::Internal)?;
@@ -585,7 +603,7 @@ pub async fn upload_file_send_direct(
     )
     .await;
 
-    Ok(Json(pending.to_json()))
+    Ok(())
 }
 
 // ── PUT /api/sends/{send_id} ────────────────────────────────────────
@@ -597,15 +615,16 @@ pub async fn update_send(
     Path(send_id): Path<String>,
     Json(payload): Json<SendRequestData>,
 ) -> Result<Json<Value>, AppError> {
-    validate_send_dates(&payload.deletion_date, payload.expiration_date.as_deref())?;
+    let (del, exp) =
+        validate_send_dates(&payload.deletion_date, payload.expiration_date.as_deref())?;
 
     let db = db::get_db(&env)?;
     let mut send = SendDB::find_by_id_and_user(&db, &send_id, &claims.sub)
         .await?
-        .ok_or_else(|| AppError::NotFound("Send not found".into()))?;
+        .ok_or_else(|| AppError::BadRequest("Send not found".into()))?;
 
     if send.send_type != payload.send_type {
-        return Err(AppError::BadRequest("Cannot change send type".into()));
+        return Err(AppError::BadRequest("Sends can't change type".into()));
     }
 
     if payload.send_type == SEND_TYPE_TEXT {
@@ -619,7 +638,7 @@ pub async fn update_send(
         send.data = data;
     }
 
-    apply_update(&mut send, &payload);
+    apply_update(&mut send, &payload, del, exp)?;
 
     if let Some(ref pw) = payload.password {
         send.set_password(Some(pw)).await?;
@@ -647,11 +666,11 @@ pub async fn delete_send(
     claims: Claims,
     State(env): State<Arc<Env>>,
     Path(send_id): Path<String>,
-) -> Result<Json<()>, AppError> {
+) -> Result<(), AppError> {
     let db = db::get_db(&env)?;
     let send = SendDB::find_by_id_and_user(&db, &send_id, &claims.sub)
         .await?
-        .ok_or_else(|| AppError::NotFound("Send not found".into()))?;
+        .ok_or_else(|| AppError::BadRequest("Send not found".into()))?;
 
     if let Some(key) = send.storage_key() {
         delete_storage_objects(env.as_ref(), &[key]).await?;
@@ -670,7 +689,7 @@ pub async fn delete_send(
     )
     .await;
 
-    Ok(Json(()))
+    Ok(())
 }
 
 // ── PUT /api/sends/{send_id}/remove-password ────────────────────────
@@ -684,7 +703,7 @@ pub async fn remove_password(
     let db = db::get_db(&env)?;
     let mut send = SendDB::find_by_id_and_user(&db, &send_id, &claims.sub)
         .await?
-        .ok_or_else(|| AppError::NotFound("Send not found".into()))?;
+        .ok_or_else(|| AppError::BadRequest("Send not found".into()))?;
 
     send.remove_password(&db).await?;
     db::touch_user_updated_at(&db, &claims.sub, &send.updated_at).await?;
@@ -719,7 +738,7 @@ pub async fn access_send(
     let db = db::get_db(&env)?;
     let mut send = SendDB::find_by_access_id(&db, &access_id)
         .await?
-        .ok_or_else(|| AppError::NotFound("Send not found".into()))?;
+        .ok_or_else(|| AppError::NotFound(SEND_INACCESSIBLE_MSG.into()))?;
 
     send.validate_access()?;
 
@@ -727,27 +746,30 @@ pub async fn access_send(
         let pw = payload
             .password
             .as_deref()
-            .ok_or_else(|| AppError::Unauthorized("Password required".into()))?;
+            .ok_or_else(|| AppError::Unauthorized("Password not provided".into()))?;
         if !send.check_password(pw).await? {
-            return Err(AppError::Unauthorized("Invalid password".into()));
+            return Err(AppError::BadRequest("Invalid password".into()));
         }
     }
 
-    // For file sends, access count is only incremented on actual download
-    // (via access_file_send), not on metadata access.
+    // Text sends increment access count here; file sends increment on download.
+    // Both types get a revision bump and sync notification (aligns with Vaultwarden).
     if send.send_type != SEND_TYPE_FILE {
         send.increment_access_count(&db).await?;
-        db::touch_user_updated_at(&db, &send.user_id, &send.updated_at).await?;
-
-        publish_send_notification(
-            env.as_ref(),
-            &send.user_id,
-            UpdateType::SyncSendUpdate,
-            &send.id,
-            &send.updated_at,
-        )
-        .await;
+    } else {
+        send.touch(&db).await?;
     }
+
+    db::touch_user_updated_at(&db, &send.user_id, &send.updated_at).await?;
+
+    publish_send_notification(
+        env.as_ref(),
+        &send.user_id,
+        UpdateType::SyncSendUpdate,
+        &send.id,
+        &send.updated_at,
+    )
+    .await;
 
     let creator_id = resolve_creator_identifier(&db, &send).await;
     Ok(Json(send.to_access_json(creator_id.as_deref())))
@@ -764,21 +786,21 @@ pub async fn access_file_send(
     let db = db::get_db(&env)?;
     let mut send = SendDB::find_by_id(&db, &send_id)
         .await?
-        .ok_or_else(|| AppError::NotFound("Send not found".into()))?;
+        .ok_or_else(|| AppError::NotFound(SEND_INACCESSIBLE_MSG.into()))?;
 
     send.validate_access()?;
 
     if send.send_type != SEND_TYPE_FILE {
-        return Err(AppError::BadRequest("Not a file send".into()));
+        return Err(AppError::NotFound(SEND_INACCESSIBLE_MSG.into()));
     }
 
     if send.has_password() {
         let pw = payload
             .password
             .as_deref()
-            .ok_or_else(|| AppError::BadRequest("Password required".into()))?;
+            .ok_or_else(|| AppError::Unauthorized("Password not provided".into()))?;
         if !send.check_password(pw).await? {
-            return Err(AppError::Unauthorized("Invalid password".into()));
+            return Err(AppError::BadRequest("Invalid password".into()));
         }
     }
 
