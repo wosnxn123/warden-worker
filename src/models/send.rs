@@ -42,7 +42,6 @@ pub struct SendDB {
 // ── Constructor & field mutators ────────────────────────────────────
 
 impl SendDB {
-
     pub fn new(
         user_id: String,
         send_type: i32,
@@ -224,8 +223,9 @@ impl SendDB {
     }
 
     pub fn to_json(&self) -> Value {
-        let mut data: Value =
-            serde_json::from_str(&self.data).map(lowercase_first_char_keys).unwrap_or(Value::Null);
+        let mut data: Value = serde_json::from_str(&self.data)
+            .map(lowercase_first_char_keys)
+            .unwrap_or(Value::Null);
         Self::normalize_data(&mut data);
 
         let mut json = serde_json::json!({
@@ -265,8 +265,9 @@ impl SendDB {
     }
 
     pub fn to_access_json(&self, creator_identifier: Option<&str>) -> Value {
-        let mut data: Value =
-            serde_json::from_str(&self.data).map(lowercase_first_char_keys).unwrap_or(Value::Null);
+        let mut data: Value = serde_json::from_str(&self.data)
+            .map(lowercase_first_char_keys)
+            .unwrap_or(Value::Null);
         Self::normalize_data(&mut data);
 
         let mut json = serde_json::json!({

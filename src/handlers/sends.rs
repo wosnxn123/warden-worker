@@ -152,21 +152,6 @@ pub fn build_download_token(env: &Env, send_id: &str, file_id: &str) -> Result<S
         .map_err(|_| AppError::Crypto("Failed to create send download token".into()))
 }
 
-fn upload_url(
-    env: &Env,
-    base_url: &str,
-    send_id: &str,
-    file_id: &str,
-    user_id: &str,
-    device: &str,
-) -> Result<String, AppError> {
-    let token = build_upload_token(env, user_id, device, send_id, file_id)?;
-    let base = base_url.trim_end_matches('/');
-    Ok(format!(
-        "{base}/api/sends/{send_id}/file/{file_id}/azure-upload?token={token}"
-    ))
-}
-
 // ── Helpers ─────────────────────────────────────────────────────────
 
 fn prepare_send_data(payload: &SendRequestData) -> Result<String, AppError> {
@@ -393,12 +378,14 @@ pub async fn create_file_send_v2(
     let file_id = uuid::Uuid::new_v4().to_string();
 
     let data = prepare_send_data(&payload)?;
-    let mut file_data: Value =
-        serde_json::from_str(&data).map_err(|_| AppError::Internal)?;
+    let mut file_data: Value = serde_json::from_str(&data).map_err(|_| AppError::Internal)?;
     if let Some(o) = file_data.as_object_mut() {
         o.insert("id".into(), Value::String(file_id.clone()));
         o.insert("size".into(), serde_json::json!(declared_size));
-        o.insert("sizeName".into(), Value::String(display_size(declared_size)));
+        o.insert(
+            "sizeName".into(),
+            Value::String(display_size(declared_size)),
+        );
     }
     let data = serde_json::to_string(&file_data).map_err(|_| AppError::Internal)?;
 
@@ -406,14 +393,11 @@ pub async fn create_file_send_v2(
     send.set_password(payload.password.as_deref()).await?;
     send.insert_pending(&db).await?;
 
-    let url = upload_url(
-        &env,
-        &base_url,
-        &send.id,
-        &file_id,
-        &claims.sub,
-        &claims.client_id,
-    )?;
+    let token = build_upload_token(&env, &claims.sub, &claims.device, &send.id, &file_id)?;
+    let url = format!(
+        "{base_url}/api/sends/{}/file/{file_id}/azure-upload?token={token}",
+        send.id
+    );
 
     let send_response = send.to_json();
 
@@ -499,8 +483,7 @@ pub async fn create_file_send_legacy(
     let file_id = uuid::Uuid::new_v4().to_string();
 
     let data = prepare_send_data(&payload)?;
-    let mut file_data: Value =
-        serde_json::from_str(&data).map_err(|_| AppError::Internal)?;
+    let mut file_data: Value = serde_json::from_str(&data).map_err(|_| AppError::Internal)?;
     if let Some(o) = file_data.as_object_mut() {
         o.insert("id".into(), Value::String(file_id.clone()));
         o.insert("size".into(), serde_json::json!(actual_size));
@@ -781,6 +764,7 @@ pub async fn access_send(
 pub async fn access_file_send(
     State(env): State<Arc<Env>>,
     Path((send_id, file_id)): Path<(String, String)>,
+    Extension(BaseUrl(base_url)): Extension<BaseUrl>,
     Json(payload): Json<SendAccessRequest>,
 ) -> Result<Json<Value>, AppError> {
     let db = db::get_db(&env)?;
@@ -817,18 +801,7 @@ pub async fn access_file_send(
     .await;
 
     let token = build_download_token(&env, &send_id, &file_id)?;
-    let base = env
-        .var("DOMAIN")
-        .ok()
-        .map(|v| v.to_string())
-        .unwrap_or_default();
-    let base = if base.is_empty() {
-        String::new()
-    } else {
-        base.trim_end_matches('/').to_string()
-    };
-
-    let url = format!("{base}/api/sends/{send_id}/{file_id}?t={token}");
+    let url = format!("{base_url}/api/sends/{send_id}/{file_id}?t={token}");
 
     Ok(Json(serde_json::json!({
         "id": file_id,

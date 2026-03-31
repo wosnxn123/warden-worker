@@ -86,7 +86,7 @@ pub struct AttachmentDeleteResponse {
     pub cipher: Cipher,
 }
 
-#[derive(Clone,Debug,Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(untagged)]
 pub enum NumberOrString {
     Number(i64),
@@ -209,14 +209,16 @@ pub async fn create_attachment_v2(
     .await?;
 
     // Return upload URL pointing to local upload endpoint
-    let url = upload_url(
+    let token = build_upload_download_token(
         &env,
-        &base_url,
+        &claims.sub,
+        &claims.device,
         &cipher_id,
         &attachment_id,
-        &claims.sub,
-        &claims.client_id,
     )?;
+    let url = format!(
+        "{base_url}/api/ciphers/{cipher_id}/attachment/{attachment_id}/azure-upload?token={token}"
+    );
     let mut cipher_response: Cipher = cipher.into();
     hydrate_cipher_attachments(&db, &env, &mut cipher_response).await?;
 
@@ -471,14 +473,16 @@ pub async fn get_attachment(
         ));
     }
 
-    let url = download_url(
+    let token = build_upload_download_token(
         &env,
-        &base_url,
+        &claims.sub,
+        &claims.device,
         &cipher_id,
         &attachment_id,
-        &claims.sub,
-        &claims.client_id,
     )?;
+    let url = format!(
+        "{base_url}/api/ciphers/{cipher_id}/attachment/{attachment_id}/download?token={token}"
+    );
     Ok(Json(attachment.to_response(Some(url))))
 }
 
@@ -693,21 +697,6 @@ pub(crate) async fn list_attachment_keys_for_soft_deleted_before(
     Ok(map_rows_to_keys(rows))
 }
 
-fn download_url(
-    env: &Env,
-    base_url: &str,
-    cipher_id: &str,
-    attachment_id: &str,
-    user_id: &str,
-    device: &str,
-) -> Result<String, AppError> {
-    let token = build_upload_download_token(env, user_id, device, cipher_id, attachment_id)?;
-    let normalized_base = base_url.trim_end_matches('/');
-    Ok(format!(
-        "{normalized_base}/api/ciphers/{cipher_id}/attachment/{attachment_id}/download?token={token}"
-    ))
-}
-
 async fn ensure_cipher_for_user(
     db: &D1Database,
     cipher_id: &str,
@@ -912,21 +901,6 @@ fn build_upload_download_token(
     jwt_compact::alg::Hs256
         .token(&Header::empty(), &claims, &key)
         .map_err(|_| AppError::Crypto("Failed to create attachment token".to_string()))
-}
-
-fn upload_url(
-    env: &Env,
-    base_url: &str,
-    cipher_id: &str,
-    attachment_id: &str,
-    user_id: &str,
-    device: &str,
-) -> Result<String, AppError> {
-    let token = build_upload_download_token(env, user_id, device, cipher_id, attachment_id)?;
-    let normalized_base = base_url.trim_end_matches('/');
-    Ok(format!(
-        "{normalized_base}/api/ciphers/{cipher_id}/attachment/{attachment_id}/azure-upload?token={token}"
-    ))
 }
 
 fn jwt_secret(env: &Env) -> Result<String, AppError> {
