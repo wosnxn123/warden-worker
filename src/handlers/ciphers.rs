@@ -638,9 +638,9 @@ pub async fn move_cipher_selected(
     // Uses json_extract to get folderId from request body
     let folder_invalid: Option<Value> = db
         .prepare(
-            "SELECT 1 WHERE json_extract(?1, '$.folderId') IS NOT NULL 
+            "SELECT 1 WHERE NULLIF(json_extract(?1, '$.folderId'), '') IS NOT NULL 
              AND NOT EXISTS (
-                 SELECT 1 FROM folders WHERE id = json_extract(?1, '$.folderId') AND user_id = ?2
+                 SELECT 1 FROM folders WHERE id = NULLIF(json_extract(?1, '$.folderId'), '') AND user_id = ?2
              )",
         )
         .bind(&[body.clone().into(), user_id.clone().into()])?
@@ -657,7 +657,7 @@ pub async fn move_cipher_selected(
     // Update folder_id for all ciphers that belong to the user and are in the ids list
     // Uses json_extract for folderId and json_each for ids array
     db.prepare(
-        "UPDATE ciphers SET folder_id = json_extract(?1, '$.folderId'), updated_at = ?2 
+        "UPDATE ciphers SET folder_id = NULLIF(json_extract(?1, '$.folderId'), ''), updated_at = ?2 
          WHERE user_id = ?3 AND id IN (SELECT value FROM json_each(?1, '$.ids'))",
     )
     .bind(&[body.into(), now.into(), user_id.clone().into()])?

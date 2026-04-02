@@ -304,6 +304,7 @@ pub struct CipherRequestData {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
     // Folder id is not included in import (determined by folder_relationships)
+    #[serde(default, deserialize_with = "super::deser_opt_nonempty_str")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub folder_id: Option<String>,
     #[serde(alias = "organizationID")]
@@ -363,6 +364,7 @@ pub struct CipherListResponse {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PartialCipherData {
+    #[serde(default, deserialize_with = "super::deser_opt_nonempty_str")]
     pub folder_id: Option<String>,
     pub favorite: bool,
 }

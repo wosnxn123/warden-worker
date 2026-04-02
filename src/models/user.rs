@@ -342,6 +342,7 @@ pub struct RotateFolderData {
     // There is a bug in 2024.3.x which adds a `null` item.
     // To bypass this we allow an Option here, but skip it during the updates
     // See: https://github.com/bitwarden/clients/issues/8453
+    #[serde(default, deserialize_with = "super::deser_opt_nonempty_str")]
     pub id: Option<String>,
     pub name: String,
 }
