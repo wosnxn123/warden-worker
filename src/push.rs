@@ -412,7 +412,7 @@ pub async fn user_has_push_device(env: &Env, user_id: &str) -> Result<bool, AppE
     let db = db::get_db(env)?;
     let count: Option<f64> = db
         .prepare(
-            "SELECT COUNT(*) as cnt FROM devices WHERE user_id = ?1 AND push_token IS NOT NULL",
+            "SELECT COUNT(*) as cnt FROM devices WHERE user_id = ?1 AND push_token IS NOT NULL AND push_uuid IS NOT NULL",
         )
         .bind(&[user_id.into()])
         .map_err(AppError::Worker)?
@@ -436,6 +436,52 @@ pub async fn lookup_device_push_info(
         .await
         .map_err(|_| AppError::Database)?;
     Ok(row.and_then(|r| serde_json::from_value(r).ok()))
+}
+
+/// Unregister all push devices for a user from the relay.
+/// Should be called before deleting device rows (e.g. account deletion, session revocation).
+/// Failures are logged but do not prevent the caller from proceeding.
+pub async fn unregister_push_devices_by_user(env: &Env, user_id: &str) {
+    let Some(cfg) = try_get_push_config(env) else {
+        return;
+    };
+    let db = match db::get_db(env) {
+        Ok(db) => db,
+        Err(_) => return,
+    };
+
+    let stmt = match db
+        .prepare("SELECT push_uuid FROM devices WHERE user_id = ?1 AND push_uuid IS NOT NULL")
+        .bind(&[user_id.into()])
+    {
+        Ok(s) => s,
+        Err(e) => {
+            log::warn!("Failed to query push devices for user {user_id}: {e}");
+            return;
+        }
+    };
+
+    let push_uuids: Vec<String> = match stmt.all().await {
+        Ok(res) => res
+            .results::<serde_json::Value>()
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|row| {
+                row.get("push_uuid")
+                    .and_then(|v| v.as_str().map(String::from))
+            })
+            .collect(),
+        Err(e) => {
+            log::warn!("Failed to query push devices for user {user_id}: {e}");
+            return;
+        }
+    };
+
+    for push_uuid in &push_uuids {
+        if let Err(e) = unregister_push_device(&cfg, Some(push_uuid.as_str())).await {
+            log::warn!("Failed to unregister push device {push_uuid}: {e}");
+        }
+    }
 }
 
 // ── Push notification helpers ───────────────────────────────────

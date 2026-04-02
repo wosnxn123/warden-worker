@@ -24,6 +24,7 @@ use crate::{
         },
     },
     notifications::{self, UpdateType},
+    push,
 };
 
 const KDF_TYPE_PBKDF2: i32 = 0;
@@ -609,6 +610,8 @@ pub async fn delete_account(
         return Err(AppError::Unauthorized("Invalid password".to_string()));
     }
 
+    push::unregister_push_devices_by_user(&env, user_id).await;
+
     if attachments::attachments_enabled(env.as_ref()) {
         let keys = attachments::list_attachment_keys_for_user(&db, user_id).await?;
         attachments::delete_storage_objects(env.as_ref(), &keys).await?;
@@ -1130,6 +1133,8 @@ pub async fn post_sstamp(
     if !verification.is_valid() {
         return Err(AppError::Unauthorized("Invalid password".to_string()));
     }
+
+    push::unregister_push_devices_by_user(&env, user_id).await;
 
     // Delete all device rows — this revokes every refresh token and 2FA-remember token
     Device::delete_all_by_user(&db, user_id).await?;

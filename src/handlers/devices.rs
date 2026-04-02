@@ -181,12 +181,12 @@ async fn clear_device_token(
 ) -> Result<Json<Value>, AppError> {
     let db = db::get_db(&env)?;
     let mut device = current_device(&db, &claims, &device_id).await?;
-    let Some(cfg) = push::push_config(&env)? else {
-        return Ok(Json(json!({})));
-    };
 
     device.set_push_token(&db, None).await?;
-    push::unregister_push_device(&cfg, device.push_uuid.as_deref()).await?;
+
+    if let Some(cfg) = push::push_config(&env)? {
+        push::unregister_push_device(&cfg, device.push_uuid.as_deref()).await?;
+    }
 
     Ok(Json(json!({})))
 }
