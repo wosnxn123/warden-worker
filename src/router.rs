@@ -71,7 +71,7 @@ pub fn api_router(env: Env) -> Router {
             "/api/ciphers/{id}/attachment/v2",
             post(attachments::create_attachment_v2),
         )
-        // Note: Azure upload and download routes are handled in entry.js for zero-copy streaming
+        // Note: Azure upload/download routes are intercepted in handlers::streaming (zero-copy)
         // PUT /api/ciphers/{id}/attachment/{attachment_id}/azure-upload
         // GET /api/ciphers/{id}/attachment/{attachment_id}/download?token=...
         .route(

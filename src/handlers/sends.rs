@@ -36,16 +36,16 @@ const KV_MAX_VALUE_BYTES: i64 = 25 * 1024 * 1024;
 
 // ── Token claims ────────────────────────────────────────────────────
 
-#[derive(Debug, Serialize, Deserialize)]
-struct SendUploadClaims {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct SendUploadClaims {
     pub sub: String,
     pub device: String,
     pub send_id: String,
     pub file_id: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-struct SendDownloadClaims {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct SendDownloadClaims {
     pub send_id: String,
     pub file_id: String,
 }
@@ -90,10 +90,6 @@ fn user_send_limit_bytes(env: &Env) -> Option<i64> {
 
 // ── JWT helpers ─────────────────────────────────────────────────────
 
-fn jwt_secret(env: &Env) -> Result<String, AppError> {
-    Ok(env.secret("JWT_SECRET")?.to_string())
-}
-
 fn build_upload_token(
     env: &Env,
     user_id: &str,
@@ -120,7 +116,7 @@ fn build_upload_token(
     });
     claims.expiration = Some(expiration);
 
-    let secret = jwt_secret(env)?;
+    let secret = super::attachments::jwt_secret(env)?;
     let key = Hs256Key::new(secret.as_bytes());
     jwt_compact::alg::Hs256
         .token(&Header::empty(), &claims, &key)
@@ -145,7 +141,7 @@ pub fn build_download_token(env: &Env, send_id: &str, file_id: &str) -> Result<S
     });
     claims.expiration = Some(expiration);
 
-    let secret = jwt_secret(env)?;
+    let secret = super::attachments::jwt_secret(env)?;
     let key = Hs256Key::new(secret.as_bytes());
     jwt_compact::alg::Hs256
         .token(&Header::empty(), &claims, &key)

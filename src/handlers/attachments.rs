@@ -16,7 +16,7 @@ use worker::{query, wasm_bindgen::JsValue, D1Database, Env, HttpMetadata};
 
 use crate::{
     auth::{Claims, JWT_VALIDATION_LEEWAY_SECS},
-    db,
+    db::{self, touch_user_updated_at},
     error::AppError,
     models::{
         attachment::{AttachmentDB, AttachmentResponse},
@@ -93,8 +93,8 @@ pub enum NumberOrString {
     String(String),
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-struct AttachmentClaims {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct AttachmentClaims {
     pub sub: String,
     pub device: String,
     pub cipher_id: String,
@@ -130,7 +130,7 @@ impl NumberOrString {
     }
 }
 
-async fn touch_cipher_updated_at(
+pub(crate) async fn touch_cipher_updated_at(
     db: &D1Database,
     cipher_id: &str,
     now: &str,
@@ -280,7 +280,6 @@ pub async fn upload_attachment_v2_data(
         read_multipart(&mut multipart).await?;
     let actual_size = file_bytes.len() as i64;
 
-    // Strict match — limits were already validated at pending-record creation time
     if actual_size != pending.file_size {
         query!(
             &db,
@@ -296,10 +295,6 @@ pub async fn upload_attachment_v2_data(
         )));
     }
 
-    // Validate capacity limits (replace with actual size)
-    enforce_limits(&db, &env, &claims.sub, actual_size, Some(&pending.id)).await?;
-
-    // Need a key
     if pending.akey.is_none() && key_override.is_none() {
         return Err(AppError::BadRequest(
             "No attachment key provided".to_string(),
@@ -309,39 +304,10 @@ pub async fn upload_attachment_v2_data(
         pending.akey = Some(k);
     }
 
-    // Save to storage (KV or R2)
     upload_to_storage(&env, &pending.r2_key(), content_type, file_bytes.to_vec()).await?;
 
-    // Finalize: move pending -> attachments and touch timestamps
-    let now = db::now_string();
-    query!(
-        &db,
-        "INSERT INTO attachments (id, cipher_id, file_name, file_size, akey, created_at, updated_at, organization_id)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-        pending.id,
-        pending.cipher_id,
-        pending.file_name,
-        actual_size,
-        pending.akey,
-        pending.created_at,
-        now,
-        pending.organization_id,
-    )
-    .map_err(|_| AppError::Database)?
-    .run()
-    .await?;
-
-    query!(
-        &db,
-        "DELETE FROM attachments_pending WHERE id = ?1",
-        pending.id
-    )
-    .map_err(|_| AppError::Database)?
-    .run()
-    .await?;
-
-    touch_cipher_updated_at(&db, &cipher_id, &now).await?;
-    db::touch_user_updated_at(&db, &claims.sub, &now).await?;
+    let now = pending.finalize_pending(&db).await?;
+    touch_user_updated_at(&db, &claims.sub, &now).await?;
 
     if let Err(error) = notifications::publish_cipher_update(
         env.as_ref(),
@@ -697,7 +663,7 @@ pub(crate) async fn list_attachment_keys_for_soft_deleted_before(
     Ok(map_rows_to_keys(rows))
 }
 
-async fn ensure_cipher_for_user(
+pub(crate) async fn ensure_cipher_for_user(
     db: &D1Database,
     cipher_id: &str,
     user_id: &str,
@@ -724,7 +690,10 @@ async fn ensure_cipher_for_user(
     Ok(cipher)
 }
 
-async fn fetch_attachment(db: &D1Database, attachment_id: &str) -> Result<AttachmentDB, AppError> {
+pub(crate) async fn fetch_attachment(
+    db: &D1Database,
+    attachment_id: &str,
+) -> Result<AttachmentDB, AppError> {
     db.prepare("SELECT * FROM attachments WHERE id = ?1")
         .bind(&[attachment_id.into()])?
         .first(None)
@@ -733,7 +702,7 @@ async fn fetch_attachment(db: &D1Database, attachment_id: &str) -> Result<Attach
         .ok_or_else(|| AppError::NotFound("Attachment not found".to_string()))
 }
 
-async fn fetch_pending_attachment(
+pub(crate) async fn fetch_pending_attachment(
     db: &D1Database,
     attachment_id: &str,
 ) -> Result<AttachmentDB, AppError> {
@@ -903,7 +872,7 @@ fn build_upload_download_token(
         .map_err(|_| AppError::Crypto("Failed to create attachment token".to_string()))
 }
 
-fn jwt_secret(env: &Env) -> Result<String, AppError> {
+pub(crate) fn jwt_secret(env: &Env) -> Result<String, AppError> {
     Ok(env.secret("JWT_SECRET")?.to_string())
 }
 

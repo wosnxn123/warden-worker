@@ -1,27 +1,17 @@
 /**
  * JS Wrapper Entry Point for Warden Worker
  *
- * This wrapper intercepts attachment upload and download requests for zero-copy streaming
- * to/from R2. Workers R2 binding can accept request.body directly for uploads,
- * and r2Object.body can be passed directly to Response for downloads.
- * See: https://blog.cloudflare.com/zh-cn/r2-ga/
+ * This wrapper handles WebSocket notification routing and optionally offloads CPU-heavy
+ * endpoints to a Rust Durable Object (higher CPU budget).
  *
- * This avoids CPU time consumption that would occur if the body went through
- * the Rust/WASM layer with axum body conversion.
- *
- * Additionally, this wrapper can optionally offload CPU-heavy endpoints to a Rust Durable Object
- * (higher CPU budget) by binding `HEAVY_DO` in `wrangler.toml`.
- * This is used for operations like imports and password verification paths, keeping the main
- * Worker on a low-CPU fast path for typical requests.
+ * Attachment/send streaming (upload & download) is handled entirely in Rust via
+ * handlers::streaming, using zero-copy ReadableStream passthrough to R2/KV.
  *
  * All other requests are passed through to the Rust WASM module.
  */
 
 import RustWorker from "../build/index.js";
 import { decodeJwtPayloadUnsafe } from "./jwt.js";
-import { jsonError } from "./streaming-common.js";
-import { handleAzureUpload, handleDownload } from "./attachments.js";
-import { handleSendUpload, handleSendDownload } from "./sends.js";
 
 function getBearerToken(request) {
   const auth = request.headers.get("Authorization") || request.headers.get("authorization");
@@ -106,90 +96,6 @@ function shouldOffloadToHeavyDo(request, url) {
   return methods.has(method);
 }
 
-function parsePathParams(path, pattern) {
-  const parts = path.replace(/^\//, "").split("/");
-  if (parts.length !== pattern.length) {
-    return null;
-  }
-
-  const params = {};
-  for (let i = 0; i < pattern.length; i++) {
-    const expected = pattern[i];
-    const actual = parts[i];
-
-    if (typeof expected === "string") {
-      if (actual !== expected) {
-        return null;
-      }
-      continue;
-    }
-
-    if (expected.exclude?.includes(actual)) {
-      return null;
-    }
-    params[expected.name] = actual;
-  }
-
-  return params;
-}
-
-const FAST_PATH_ROUTES = [
-  {
-    method: "PUT",
-    pattern: ["api", "ciphers", { name: "cipherId" }, "attachment", { name: "attachmentId" }, "azure-upload"],
-    tokenParam: "token",
-    missingTokenMessage: "Missing upload token",
-    handler: (request, env, params, token) =>
-      handleAzureUpload(request, env, params.cipherId, params.attachmentId, token),
-  },
-  {
-    method: "PUT",
-    pattern: ["api", "sends", { name: "sendId" }, "file", { name: "fileId" }, "azure-upload"],
-    tokenParam: "token",
-    missingTokenMessage: "Missing upload token",
-    handler: (request, env, params, token) =>
-      handleSendUpload(request, env, params.sendId, params.fileId, token),
-  },
-  {
-    method: "GET",
-    pattern: ["api", "ciphers", { name: "cipherId" }, "attachment", { name: "attachmentId" }, "download"],
-    tokenParam: "token",
-    missingTokenMessage: "Missing download token",
-    handler: (request, env, params, token) =>
-      handleDownload(request, env, params.cipherId, params.attachmentId, token),
-  },
-  {
-    method: "GET",
-    pattern: ["api", "sends", { name: "sendId", exclude: ["access", "file"] }, { name: "fileId" }],
-    tokenParam: "t",
-    tokenRequired: false,
-    handler: (request, env, params, token) =>
-      handleSendDownload(request, env, params.sendId, params.fileId, token),
-  },
-];
-
-function dispatchFastPath(request, env, url, method) {
-  for (const route of FAST_PATH_ROUTES) {
-    if (route.method !== method) {
-      continue;
-    }
-
-    const params = parsePathParams(url.pathname, route.pattern);
-    if (!params) {
-      continue;
-    }
-
-    const token = url.searchParams.get(route.tokenParam);
-    if (!token && route.tokenRequired !== false) {
-      return jsonError(route.missingTokenMessage || "Missing token", 401);
-    }
-
-    return route.handler(request, env, params, token);
-  }
-
-  return null;
-}
-
 // Main fetch handler
 export default {
   async fetch(request, env, ctx) {
@@ -235,13 +141,7 @@ export default {
       }
     }
 
-    // Attachment/send upload and download fast-path.
-    const fastPathResponse = dispatchFastPath(request, env, url, method);
-    if (fastPathResponse) {
-      return fastPathResponse;
-    }
-
-    // Pass all other requests to Rust WASM
+    // Pass all other requests to Rust WASM (streaming routes are intercepted in Rust)
     const worker = new RustWorker(ctx, env);
     return worker.fetch(request);
   },

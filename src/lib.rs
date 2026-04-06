@@ -21,17 +21,21 @@ mod router;
 pub struct BaseUrl(pub String);
 
 #[event(fetch)]
-pub async fn main(
-    req: HttpRequest,
-    env: Env,
-    _ctx: Context,
-) -> Result<axum::http::Response<axum::body::Body>> {
-    // Set up logging
+pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<web_sys::Response> {
     console_error_panic_hook::set_once();
     let _ = console_log::init_with_level(log::Level::Debug);
 
-    // Extract base URL from the incoming request
-    let uri = req.uri().clone();
+    let url = req.url()?;
+    let method = req.method();
+    let path = url.path().to_string();
+
+    if handlers::streaming::is_streaming_route(&method, &path) {
+        return handlers::streaming::handle(req, env, &path, &url).await;
+    }
+
+    let http_req: HttpRequest = req.try_into()?;
+
+    let uri = http_req.uri().clone();
     let base_url = format!(
         "{}://{}",
         uri.scheme_str().unwrap_or("https"),
@@ -40,14 +44,11 @@ pub async fn main(
 
     let env = Arc::new(env);
 
-    // Allow all origins for CORS, which is typical for a public API like Bitwarden's.
     let cors = CorsLayer::new()
         .allow_methods(Any)
         .allow_headers(Any)
         .allow_origin(Any);
 
-    // Attachment uploads/downloads are handled in entry.js for zero-copy streaming,
-    // so we can use a conservative body limit here (5MB) for regular API requests.
     const BODY_LIMIT: usize = 5 * 1024 * 1024;
 
     let mut app = router::api_router((*env).clone())
@@ -55,7 +56,8 @@ pub async fn main(
         .layer(cors)
         .layer(DefaultBodyLimit::max(BODY_LIMIT));
 
-    Ok(app.call(req).await?)
+    let resp = app.call(http_req).await?;
+    worker::response_to_wasm(resp)
 }
 
 /// Scheduled event handler for cron-triggered tasks.
