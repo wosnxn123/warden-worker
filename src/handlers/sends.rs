@@ -216,10 +216,18 @@ async fn publish_send_notification(
     update_type: UpdateType,
     send_id: &str,
     now: &str,
+    context_id: Option<&str>,
 ) {
-    if let Err(error) =
-        notifications::publish_send_update(env, user_id, update_type, send_id, Some(user_id), now)
-            .await
+    if let Err(error) = notifications::publish_send_update(
+        env,
+        user_id,
+        update_type,
+        send_id,
+        Some(user_id),
+        now,
+        context_id,
+    )
+    .await
     {
         log::error!("Failed to publish Send notification: {error}");
     }
@@ -314,6 +322,7 @@ pub async fn create_text_send(
         UpdateType::SyncSendCreate,
         &send.id,
         &send.updated_at,
+        Some(&claims.device),
     )
     .await;
 
@@ -502,6 +511,7 @@ pub async fn create_file_send_legacy(
         UpdateType::SyncSendCreate,
         &send.id,
         &send.updated_at,
+        Some(&claims.device),
     )
     .await;
 
@@ -579,6 +589,7 @@ pub async fn upload_file_send_direct(
         UpdateType::SyncSendCreate,
         &pending.id,
         &pending.updated_at,
+        Some(&claims.device),
     )
     .await;
 
@@ -632,6 +643,7 @@ pub async fn update_send(
         UpdateType::SyncSendUpdate,
         &send.id,
         &send.updated_at,
+        Some(&claims.device),
     )
     .await;
 
@@ -665,6 +677,7 @@ pub async fn delete_send(
         UpdateType::SyncSendDelete,
         &send_id,
         &now,
+        Some(&claims.device),
     )
     .await;
 
@@ -693,6 +706,7 @@ pub async fn remove_password(
         UpdateType::SyncSendUpdate,
         &send.id,
         &send.updated_at,
+        Some(&claims.device),
     )
     .await;
 
@@ -747,6 +761,7 @@ pub async fn access_send(
         UpdateType::SyncSendUpdate,
         &send.id,
         &send.updated_at,
+        None,
     )
     .await;
 
@@ -793,6 +808,7 @@ pub async fn access_file_send(
         UpdateType::SyncSendUpdate,
         &send.id,
         &send.updated_at,
+        None,
     )
     .await;
 

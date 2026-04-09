@@ -248,6 +248,7 @@ pub fn build_send_update_message(
     send_id: &str,
     user_id: Option<&str>,
     revision_date: &str,
+    context_id: Option<&str>,
 ) -> Vec<u8> {
     create_update(
         vec![
@@ -259,7 +260,7 @@ pub fn build_send_update_message(
             ),
         ],
         update_type,
-        None,
+        context_id,
     )
 }
 
@@ -453,9 +454,15 @@ pub async fn publish_send_update(
     send_id: &str,
     payload_user_id: Option<&str>,
     revision_date: &str,
+    context_id: Option<&str>,
 ) -> Result<(), AppError> {
-    let ws_bytes =
-        build_send_update_message(update_type as i32, send_id, payload_user_id, revision_date);
+    let ws_bytes = build_send_update_message(
+        update_type as i32,
+        send_id,
+        payload_user_id,
+        revision_date,
+        context_id,
+    );
     let selector = PublishSelector::user(selector_user_id);
     send_ws_to_do(env, &selector, &ws_bytes).await?;
     push::push_send_update(
@@ -465,6 +472,7 @@ pub async fn publish_send_update(
         send_id,
         payload_user_id,
         revision_date,
+        context_id,
     )
     .await;
     Ok(())

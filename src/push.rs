@@ -594,6 +594,7 @@ pub async fn push_send_update(
     send_id: &str,
     payload_user_id: Option<&str>,
     revision_date: &str,
+    context_id: Option<&str>,
 ) {
     let Some(cfg) = try_get_push_config(env) else {
         return;
@@ -601,13 +602,14 @@ pub async fn push_send_update(
     if !user_has_push_device(env, user_id).await.unwrap_or(false) {
         return;
     }
+    let device = resolve_device_info(env, user_id, context_id).await;
     let payload = build_send_push_payload(
         user_id,
         send_id,
         payload_user_id,
         revision_date,
         update_type,
-        None,
+        device.as_ref(),
     );
     if let Err(e) = send_to_push_relay(&cfg, &payload).await {
         log::warn!("Push relay failed for send_update: {e}");

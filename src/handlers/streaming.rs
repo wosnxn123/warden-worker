@@ -349,6 +349,7 @@ async fn handle_send_upload(
         send_id,
         Some(user_id),
         now,
+        Some(&claims.device),
     )
     .await
     {
