@@ -125,3 +125,50 @@ CREATE TABLE IF NOT EXISTS global_equivalent_domains (
 );
 CREATE INDEX IF NOT EXISTS idx_global_equivalent_domains_sort_order
     ON global_equivalent_domains(sort_order);
+
+-- Send support: main sends table
+CREATE TABLE IF NOT EXISTS sends (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  notes TEXT,
+  type INTEGER NOT NULL,
+  data TEXT NOT NULL,
+  akey TEXT NOT NULL,
+  password_hash TEXT,
+  password_salt TEXT,
+  password_iter INTEGER,
+  max_access_count INTEGER,
+  access_count INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  expiration_date TEXT,
+  deletion_date TEXT NOT NULL,
+  disabled INTEGER NOT NULL DEFAULT 0,
+  hide_email INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_sends_user_id ON sends(user_id);
+CREATE INDEX IF NOT EXISTS idx_sends_deletion_date ON sends(deletion_date);
+
+-- Staging table for file Sends whose upload has not yet completed.
+CREATE TABLE IF NOT EXISTS sends_pending (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  notes TEXT,
+  type INTEGER NOT NULL,
+  data TEXT NOT NULL,
+  akey TEXT NOT NULL,
+  password_hash TEXT,
+  password_salt TEXT,
+  password_iter INTEGER,
+  max_access_count INTEGER,
+  access_count INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  expiration_date TEXT,
+  deletion_date TEXT NOT NULL,
+  disabled INTEGER NOT NULL DEFAULT 0,
+  hide_email INTEGER
+);
