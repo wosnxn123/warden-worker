@@ -217,7 +217,7 @@ impl Serialize for Cipher {
         );
         response_map.insert(
             "collectionIds".to_string(),
-            json!(&self.collection_ids.as_deref().unwrap_or(&vec![])),
+            json!(&self.collection_ids.as_deref().unwrap_or(&[])),
         );
         response_map.insert("revisionDate".to_string(), json!(self.updated_at));
         response_map.insert("creationDate".to_string(), json!(self.created_at));
