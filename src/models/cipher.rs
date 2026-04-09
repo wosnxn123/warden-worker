@@ -36,6 +36,8 @@ pub struct CipherTypeFields {
     pub password_history: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reprompt: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
 }
 
 /// This struct represents the data stored in the `data` column of the `ciphers` table.
@@ -213,7 +215,10 @@ impl Serialize for Cipher {
             "organizationUseTotp".to_string(),
             json!(self.organization_use_totp),
         );
-        response_map.insert("collectionIds".to_string(), json!(self.collection_ids));
+        response_map.insert(
+            "collectionIds".to_string(),
+            json!(&self.collection_ids.as_deref().unwrap_or(&vec![])),
+        );
         response_map.insert("revisionDate".to_string(), json!(self.updated_at));
         response_map.insert("creationDate".to_string(), json!(self.created_at));
         response_map.insert("deletedDate".to_string(), json!(self.deleted_at));
@@ -232,14 +237,17 @@ impl Serialize for Cipher {
             );
             response_map.insert(
                 "fields".to_string(),
-                data_clone.get("fields").cloned().unwrap_or(Value::Null),
+                data_clone
+                    .get("fields")
+                    .cloned()
+                    .unwrap_or_else(|| json!([])),
             );
             response_map.insert(
                 "passwordHistory".to_string(),
                 data_clone
                     .get("passwordHistory")
                     .cloned()
-                    .unwrap_or(Value::Null),
+                    .unwrap_or_else(|| json!([])),
             );
             response_map.insert(
                 "reprompt".to_string(),
@@ -247,6 +255,10 @@ impl Serialize for Cipher {
                     .get("reprompt")
                     .cloned()
                     .unwrap_or(Value::Number(serde_json::Number::from_f64(0.0).unwrap())),
+            );
+            response_map.insert(
+                "key".to_string(),
+                data_clone.get("key").cloned().unwrap_or(Value::Null),
             );
 
             let mut login = Value::Null;
@@ -272,8 +284,8 @@ impl Serialize for Cipher {
         } else {
             response_map.insert("name".to_string(), Value::Null);
             response_map.insert("notes".to_string(), Value::Null);
-            response_map.insert("fields".to_string(), Value::Null);
-            response_map.insert("passwordHistory".to_string(), Value::Null);
+            response_map.insert("fields".to_string(), json!([]));
+            response_map.insert("passwordHistory".to_string(), json!([]));
             response_map.insert("reprompt".to_string(), Value::Null);
             response_map.insert("login".to_string(), Value::Null);
             response_map.insert("secureNote".to_string(), Value::Null);
