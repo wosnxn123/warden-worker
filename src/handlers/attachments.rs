@@ -267,7 +267,7 @@ pub async fn upload_attachment_v2_data(
     }
     let db = db::get_db(&env)?;
 
-    let cipher = ensure_cipher_for_user(&db, &cipher_id, &claims.sub).await?;
+    ensure_cipher_for_user(&db, &cipher_id, &claims.sub).await?;
 
     let mut pending = fetch_pending_attachment(&db, &attachment_id).await?;
     if pending.cipher_id != cipher_id {
@@ -309,21 +309,15 @@ pub async fn upload_attachment_v2_data(
     let now = pending.finalize_pending(&db).await?;
     touch_user_updated_at(&db, &claims.sub, &now).await?;
 
-    if let Err(error) = notifications::publish_cipher_update(
+    notifications::publish_cipher_update(
         env.as_ref(),
         &claims.sub,
         UpdateType::SyncCipherUpdate,
         &cipher_id,
-        Some(&claims.sub),
-        cipher.organization_id.as_deref(),
-        None,
-        Some(&now),
+        &now,
         Some(&claims.device),
     )
-    .await
-    {
-        log::error!("Failed to publish v2 attachment upload notification: {error}");
-    }
+    .await;
 
     Ok(Json(()))
 }
@@ -392,21 +386,15 @@ pub async fn upload_attachment_legacy(
     touch_cipher_updated_at(&db, &cipher_id, &now).await?;
     db::touch_user_updated_at(&db, &claims.sub, &now).await?;
 
-    if let Err(error) = notifications::publish_cipher_update(
+    notifications::publish_cipher_update(
         env.as_ref(),
         &claims.sub,
         UpdateType::SyncCipherUpdate,
         &cipher_id,
-        Some(&claims.sub),
-        cipher.organization_id.as_deref(),
-        None,
-        Some(&now),
+        &now,
         Some(&claims.device),
     )
-    .await
-    {
-        log::error!("Failed to publish legacy attachment upload notification: {error}");
-    }
+    .await;
 
     // reload cipher to return fresh updated_at and attachments state
     let mut cipher_response: Cipher = cipher.into();
@@ -487,21 +475,15 @@ pub async fn delete_attachment(
     touch_cipher_updated_at(&db, &cipher_id, &now).await?;
     db::touch_user_updated_at(&db, &claims.sub, &now).await?;
 
-    if let Err(error) = notifications::publish_cipher_update(
+    notifications::publish_cipher_update(
         env.as_ref(),
         &claims.sub,
         UpdateType::SyncCipherUpdate,
         &cipher_id,
-        Some(&claims.sub),
-        cipher.organization_id.as_deref(),
-        None,
-        Some(&now),
+        &now,
         Some(&claims.device),
     )
-    .await
-    {
-        log::error!("Failed to publish attachment delete notification: {error}");
-    }
+    .await;
 
     // Reload cipher to return fresh updated_at and attachments state
     let mut cipher_response: Cipher = ensure_cipher_for_user(&db, &cipher_id, &claims.sub)

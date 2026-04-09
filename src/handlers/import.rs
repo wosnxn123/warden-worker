@@ -178,17 +178,14 @@ pub async fn import_data(
 
     touch_user_updated_at(&db, &claims.sub, &now).await?;
 
-    if let Err(error) = notifications::publish_user_update(
+    notifications::publish_user_update(
         env.as_ref(),
         &claims.sub,
         UpdateType::SyncVault,
         &now,
         Some(&claims.device),
     )
-    .await
-    {
-        log::error!("Failed to publish import SyncVault notification: {error}");
-    }
+    .await;
 
     Ok(Json(()))
 }

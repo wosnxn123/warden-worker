@@ -93,7 +93,7 @@ pub async fn create_folder(
 
     touch_user_updated_at(&db, &claims.sub, &folder.updated_at).await?;
 
-    if let Err(error) = notifications::publish_folder_update(
+    notifications::publish_folder_update(
         env.as_ref(),
         &claims.sub,
         UpdateType::SyncFolderCreate,
@@ -101,10 +101,7 @@ pub async fn create_folder(
         &folder.updated_at,
         Some(&claims.device),
     )
-    .await
-    {
-        log::error!("Failed to publish folder create notification: {error}");
-    }
+    .await;
 
     let response = FolderResponse {
         id: folder.id,
@@ -137,7 +134,7 @@ pub async fn delete_folder(
 
     touch_user_updated_at(&db, &claims.sub, &now).await?;
 
-    if let Err(error) = notifications::publish_folder_update(
+    notifications::publish_folder_update(
         env.as_ref(),
         &claims.sub,
         UpdateType::SyncFolderDelete,
@@ -145,10 +142,7 @@ pub async fn delete_folder(
         &now,
         Some(&claims.device),
     )
-    .await
-    {
-        log::error!("Failed to publish folder delete notification: {error}");
-    }
+    .await;
 
     Ok(Json(()))
 }
@@ -195,7 +189,7 @@ pub async fn update_folder(
 
     touch_user_updated_at(&db, &claims.sub, &folder.updated_at).await?;
 
-    if let Err(error) = notifications::publish_folder_update(
+    notifications::publish_folder_update(
         env.as_ref(),
         &claims.sub,
         UpdateType::SyncFolderUpdate,
@@ -203,10 +197,7 @@ pub async fn update_folder(
         &folder.updated_at,
         Some(&claims.device),
     )
-    .await
-    {
-        log::error!("Failed to publish folder update notification: {error}");
-    }
+    .await;
 
     let response = FolderResponse {
         id: folder.id,

@@ -189,17 +189,14 @@ pub async fn post_domains(
     .await
     .map_err(|_| AppError::Database)?;
 
-    if let Err(error) = notifications::publish_user_update(
+    notifications::publish_user_update(
         env.as_ref(),
         &claims.sub,
         UpdateType::SyncSettings,
         &now,
         Some(&claims.device),
     )
-    .await
-    {
-        log::error!("Failed to publish domains SyncSettings notification: {error}");
-    }
+    .await;
 
     Ok(Json(json!({})))
 }

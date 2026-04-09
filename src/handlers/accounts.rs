@@ -491,17 +491,14 @@ pub async fn post_profile(
     .await
     .map_err(|_| AppError::Database)?;
 
-    if let Err(error) = notifications::publish_user_update(
+    notifications::publish_user_update(
         env.as_ref(),
         user_id,
         UpdateType::SyncSettings,
         &now,
         Some(&claims.device),
     )
-    .await
-    {
-        log::error!("Failed to publish profile SyncSettings notification: {error}");
-    }
+    .await;
 
     let two_factor_enabled = two_factor_enabled(&db, user_id).await?;
     let profile = Profile::from_user(user, two_factor_enabled)?;
@@ -562,17 +559,14 @@ pub async fn put_avatar(
     .await
     .map_err(|_| AppError::Database)?;
 
-    if let Err(error) = notifications::publish_user_update(
+    notifications::publish_user_update(
         env.as_ref(),
         user_id,
         UpdateType::SyncSettings,
         &now,
         Some(&claims.device),
     )
-    .await
-    {
-        log::error!("Failed to publish avatar SyncSettings notification: {error}");
-    }
+    .await;
 
     let two_factor_enabled = two_factor_enabled(&db, user_id).await?;
     let profile = Profile::from_user(user, two_factor_enabled)?;
@@ -701,11 +695,7 @@ pub async fn post_password(
     .run()
     .await?;
 
-    if let Err(error) =
-        notifications::publish_user_logout(env.as_ref(), user_id, &now, Some(&claims.device)).await
-    {
-        log::error!("Failed to publish password LogOut notification: {error}");
-    }
+    notifications::publish_user_logout(env.as_ref(), user_id, &now, Some(&claims.device)).await;
 
     Ok(Json(json!({})))
 }
@@ -988,11 +978,7 @@ pub async fn post_rotatekey(
     .run()
     .await?;
 
-    if let Err(error) =
-        notifications::publish_user_logout(env.as_ref(), user_id, &now, Some(&claims.device)).await
-    {
-        log::error!("Failed to publish rotatekey LogOut notification: {error}");
-    }
+    notifications::publish_user_logout(env.as_ref(), user_id, &now, Some(&claims.device)).await;
 
     Ok(Json(json!({})))
 }
@@ -1110,11 +1096,7 @@ pub async fn post_kdf(
     .run()
     .await?;
 
-    if let Err(error) =
-        notifications::publish_user_logout(env.as_ref(), user_id, &now, Some(&claims.device)).await
-    {
-        log::error!("Failed to publish kdf LogOut notification: {error}");
-    }
+    notifications::publish_user_logout(env.as_ref(), user_id, &now, Some(&claims.device)).await;
 
     Ok(Json(json!({})))
 }
@@ -1170,10 +1152,7 @@ pub async fn post_sstamp(
 
     // Logout push for mobile devices will be skiped since the records of devices are deleted.
     // This behavior is aligned with Vaultwarden.
-    if let Err(error) = notifications::publish_user_logout(env.as_ref(), user_id, &now, None).await
-    {
-        log::error!("Failed to publish security-stamp LogOut notification: {error}");
-    }
+    notifications::publish_user_logout(env.as_ref(), user_id, &now, None).await;
 
     Ok(Json(json!({})))
 }

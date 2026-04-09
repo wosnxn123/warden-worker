@@ -109,21 +109,15 @@ pub async fn create_cipher(
     attachments::hydrate_cipher_attachments(&db, env.as_ref(), &mut cipher).await?;
     db::touch_user_updated_at(&db, &claims.sub, &cipher.updated_at).await?;
 
-    if let Err(error) = notifications::publish_cipher_update(
+    notifications::publish_cipher_update(
         env.as_ref(),
         &claims.sub,
         UpdateType::SyncCipherCreate,
         &cipher.id,
-        Some(&claims.sub),
-        cipher.organization_id.as_deref(),
-        cipher.collection_ids.clone(),
-        Some(&cipher.updated_at),
+        &cipher.updated_at,
         Some(&claims.device),
     )
-    .await
-    {
-        log::error!("Failed to publish cipher create notification: {error}");
-    }
+    .await;
 
     Ok(Json(cipher))
 }
@@ -227,21 +221,15 @@ pub async fn update_cipher(
     attachments::hydrate_cipher_attachments(&db, env.as_ref(), &mut cipher).await?;
     db::touch_user_updated_at(&db, &claims.sub, &cipher.updated_at).await?;
 
-    if let Err(error) = notifications::publish_cipher_update(
+    notifications::publish_cipher_update(
         env.as_ref(),
         &claims.sub,
         UpdateType::SyncCipherUpdate,
         &cipher.id,
-        Some(&claims.sub),
-        cipher.organization_id.as_deref(),
-        None,
-        Some(&cipher.updated_at),
+        &cipher.updated_at,
         Some(&claims.device),
     )
-    .await
-    {
-        log::error!("Failed to publish cipher update notification: {error}");
-    }
+    .await;
 
     Ok(Json(cipher))
 }
@@ -363,7 +351,7 @@ pub async fn soft_delete_cipher(
     Path(id): Path<String>,
 ) -> Result<Json<()>, AppError> {
     let db = db::get_db(&env)?;
-    let existing_cipher = fetch_cipher_for_user(&db, &id, &claims.sub).await?;
+    fetch_cipher_for_user(&db, &id, &claims.sub).await?;
     let now = db::now_string();
 
     query!(
@@ -379,21 +367,15 @@ pub async fn soft_delete_cipher(
 
     db::touch_user_updated_at(&db, &claims.sub, &now).await?;
 
-    if let Err(error) = notifications::publish_cipher_update(
+    notifications::publish_cipher_update(
         env.as_ref(),
         &claims.sub,
         UpdateType::SyncCipherUpdate,
         &id,
-        Some(&claims.sub),
-        existing_cipher.organization_id.as_deref(),
-        None,
-        Some(&now),
+        &now,
         Some(&claims.device),
     )
-    .await
-    {
-        log::error!("Failed to publish soft-delete notification: {error}");
-    }
+    .await;
 
     Ok(Json(()))
 }
@@ -424,17 +406,14 @@ pub async fn soft_delete_ciphers_bulk(
 
     db::touch_user_updated_at(&db, &claims.sub, &now).await?;
 
-    if let Err(error) = notifications::publish_user_update(
+    notifications::publish_user_update(
         env.as_ref(),
         &claims.sub,
         UpdateType::SyncCiphers,
         &now,
         Some(&claims.device),
     )
-    .await
-    {
-        log::error!("Failed to publish bulk soft-delete notification: {error}");
-    }
+    .await;
 
     Ok(Json(()))
 }
@@ -448,7 +427,7 @@ pub async fn hard_delete_cipher(
     Path(id): Path<String>,
 ) -> Result<Json<()>, AppError> {
     let db = db::get_db(&env)?;
-    let existing_cipher = fetch_cipher_for_user(&db, &id, &claims.sub).await?;
+    fetch_cipher_for_user(&db, &id, &claims.sub).await?;
     let now = db::now_string();
 
     if attachments::attachments_enabled(env.as_ref()) {
@@ -475,21 +454,15 @@ pub async fn hard_delete_cipher(
 
     db::touch_user_updated_at(&db, &claims.sub, &now).await?;
 
-    if let Err(error) = notifications::publish_cipher_update(
+    notifications::publish_cipher_update(
         env.as_ref(),
         &claims.sub,
         UpdateType::SyncLoginDelete,
         &id,
-        Some(&claims.sub),
-        existing_cipher.organization_id.as_deref(),
-        None,
-        Some(&now),
+        &now,
         Some(&claims.device),
     )
-    .await
-    {
-        log::error!("Failed to publish hard-delete notification: {error}");
-    }
+    .await;
 
     Ok(Json(()))
 }
@@ -530,17 +503,14 @@ pub async fn hard_delete_ciphers_bulk(
 
     db::touch_user_updated_at(&db, &claims.sub, &now).await?;
 
-    if let Err(error) = notifications::publish_user_update(
+    notifications::publish_user_update(
         env.as_ref(),
         &claims.sub,
         UpdateType::SyncCiphers,
         &now,
         Some(&claims.device),
     )
-    .await
-    {
-        log::error!("Failed to publish bulk hard-delete notification: {error}");
-    }
+    .await;
 
     Ok(Json(()))
 }
@@ -575,21 +545,15 @@ pub async fn restore_cipher(
 
     db::touch_user_updated_at(&db, &claims.sub, &cipher.updated_at).await?;
 
-    if let Err(error) = notifications::publish_cipher_update(
+    notifications::publish_cipher_update(
         env.as_ref(),
         &claims.sub,
         UpdateType::SyncCipherUpdate,
         &cipher.id,
-        Some(&claims.sub),
-        cipher.organization_id.as_deref(),
-        None,
-        Some(&cipher.updated_at),
+        &cipher.updated_at,
         Some(&claims.device),
     )
-    .await
-    {
-        log::error!("Failed to publish cipher restore notification: {error}");
-    }
+    .await;
 
     Ok(Json(cipher))
 }
@@ -624,17 +588,14 @@ pub async fn restore_ciphers_bulk(
 
     db::touch_user_updated_at(&db, &claims.sub, &now).await?;
 
-    if let Err(error) = notifications::publish_user_update(
+    notifications::publish_user_update(
         env.as_ref(),
         &claims.sub,
         UpdateType::SyncCiphers,
         &now,
         Some(&claims.device),
     )
-    .await
-    {
-        log::error!("Failed to publish bulk restore notification: {error}");
-    }
+    .await;
 
     // Build response JSON via string concatenation (no parsing!)
     // Response schema: {"data":[...],"object":"list","continuationToken":null}
@@ -715,21 +676,15 @@ pub async fn create_cipher_simple(
     attachments::hydrate_cipher_attachments(&db, env.as_ref(), &mut cipher).await?;
     db::touch_user_updated_at(&db, &claims.sub, &cipher.updated_at).await?;
 
-    if let Err(error) = notifications::publish_cipher_update(
+    notifications::publish_cipher_update(
         env.as_ref(),
         &claims.sub,
         UpdateType::SyncCipherCreate,
         &cipher.id,
-        Some(&claims.sub),
-        cipher.organization_id.as_deref(),
-        None,
-        Some(&cipher.updated_at),
+        &cipher.updated_at,
         Some(&claims.device),
     )
-    .await
-    {
-        log::error!("Failed to publish simple cipher create notification: {error}");
-    }
+    .await;
 
     Ok(Json(cipher))
 }
@@ -782,17 +737,14 @@ pub async fn move_cipher_selected(
 
     // Update user's revision date
     db::touch_user_updated_at(&db, user_id, &now).await?;
-    if let Err(error) = notifications::publish_user_update(
+    notifications::publish_user_update(
         env.as_ref(),
         user_id,
         UpdateType::SyncCiphers,
         &now,
         Some(&claims.device),
     )
-    .await
-    {
-        log::error!("Failed to publish move bulk cipher notification: {error}");
-    }
+    .await;
 
     Ok(Json(()))
 }
@@ -854,17 +806,14 @@ pub async fn purge_vault(
     let now = db::now_string();
     db::touch_user_updated_at(&db, user_id, &now).await?;
 
-    if let Err(error) = notifications::publish_user_update(
+    notifications::publish_user_update(
         env.as_ref(),
         user_id,
         UpdateType::SyncVault,
         &now,
         Some(&claims.device),
     )
-    .await
-    {
-        log::error!("Failed to publish purge vault notification: {error}");
-    }
+    .await;
 
     Ok(Json(()))
 }

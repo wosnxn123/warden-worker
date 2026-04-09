@@ -210,29 +210,6 @@ fn apply_update(
     Ok(())
 }
 
-async fn publish_send_notification(
-    env: &Env,
-    user_id: &str,
-    update_type: UpdateType,
-    send_id: &str,
-    now: &str,
-    context_id: Option<&str>,
-) {
-    if let Err(error) = notifications::publish_send_update(
-        env,
-        user_id,
-        update_type,
-        send_id,
-        Some(user_id),
-        now,
-        context_id,
-    )
-    .await
-    {
-        log::error!("Failed to publish Send notification: {error}");
-    }
-}
-
 async fn resolve_creator_identifier(db: &D1Database, send: &SendDB) -> Option<String> {
     let hide = send.hide_email.unwrap_or(0) != 0;
     if hide {
@@ -316,7 +293,7 @@ pub async fn create_text_send(
     send.insert(&db).await?;
     db::touch_user_updated_at(&db, &claims.sub, &send.updated_at).await?;
 
-    publish_send_notification(
+    notifications::publish_send_update(
         env.as_ref(),
         &claims.sub,
         UpdateType::SyncSendCreate,
@@ -505,7 +482,7 @@ pub async fn create_file_send_legacy(
     send.insert(&db).await?;
     db::touch_user_updated_at(&db, &claims.sub, &send.updated_at).await?;
 
-    publish_send_notification(
+    notifications::publish_send_update(
         env.as_ref(),
         &claims.sub,
         UpdateType::SyncSendCreate,
@@ -583,7 +560,7 @@ pub async fn upload_file_send_direct(
     pending.finalize(&db).await?;
     db::touch_user_updated_at(&db, &claims.sub, &pending.updated_at).await?;
 
-    publish_send_notification(
+    notifications::publish_send_update(
         env.as_ref(),
         &claims.sub,
         UpdateType::SyncSendCreate,
@@ -637,7 +614,7 @@ pub async fn update_send(
     send.update(&db).await?;
     db::touch_user_updated_at(&db, &claims.sub, &send.updated_at).await?;
 
-    publish_send_notification(
+    notifications::publish_send_update(
         env.as_ref(),
         &claims.sub,
         UpdateType::SyncSendUpdate,
@@ -671,7 +648,7 @@ pub async fn delete_send(
 
     let now = db::now_string();
     db::touch_user_updated_at(&db, &claims.sub, &now).await?;
-    publish_send_notification(
+    notifications::publish_send_update(
         env.as_ref(),
         &claims.sub,
         UpdateType::SyncSendDelete,
@@ -700,7 +677,7 @@ pub async fn remove_password(
     send.remove_password(&db).await?;
     db::touch_user_updated_at(&db, &claims.sub, &send.updated_at).await?;
 
-    publish_send_notification(
+    notifications::publish_send_update(
         env.as_ref(),
         &claims.sub,
         UpdateType::SyncSendUpdate,
@@ -755,7 +732,7 @@ pub async fn access_send(
 
     db::touch_user_updated_at(&db, &send.user_id, &send.updated_at).await?;
 
-    publish_send_notification(
+    notifications::publish_send_update(
         env.as_ref(),
         &send.user_id,
         UpdateType::SyncSendUpdate,
@@ -802,7 +779,7 @@ pub async fn access_file_send(
     send.increment_access_count(&db).await?;
     db::touch_user_updated_at(&db, &send.user_id, &send.updated_at).await?;
 
-    publish_send_notification(
+    notifications::publish_send_update(
         env.as_ref(),
         &send.user_id,
         UpdateType::SyncSendUpdate,

@@ -191,7 +191,7 @@ async fn handle_attachment_upload(
         Some(claims.device.as_str())
     };
 
-    let cipher = attachments::ensure_cipher_for_user(&db, cipher_id, user_id).await?;
+    attachments::ensure_cipher_for_user(&db, cipher_id, user_id).await?;
     let pending = attachments::fetch_pending_attachment(&db, attachment_id).await?;
     if pending.cipher_id != cipher_id {
         return Err(bad("Attachment does not belong to cipher"));
@@ -227,21 +227,15 @@ async fn handle_attachment_upload(
     let now = pending.finalize_pending(&db).await?;
     touch_user_updated_at(&db, user_id, &now).await?;
 
-    if let Err(e) = notifications::publish_cipher_update(
+    notifications::publish_cipher_update(
         env,
         user_id,
         UpdateType::SyncCipherUpdate,
         cipher_id,
-        Some(user_id),
-        cipher.organization_id.as_deref(),
-        None,
-        Some(&now),
+        &now,
         context_id,
     )
-    .await
-    {
-        log::error!("Failed to publish attachment upload notification: {e}");
-    }
+    .await;
 
     ok_empty(201)
 }
@@ -342,19 +336,15 @@ async fn handle_send_upload(
 
     db::touch_user_updated_at(&db, user_id, now).await?;
 
-    if let Err(e) = notifications::publish_send_update(
+    notifications::publish_send_update(
         env,
         user_id,
         UpdateType::SyncSendCreate,
         send_id,
-        Some(user_id),
         now,
         Some(&claims.device),
     )
-    .await
-    {
-        log::error!("Failed to publish send upload notification: {e}");
-    }
+    .await;
 
     ok_empty(201)
 }

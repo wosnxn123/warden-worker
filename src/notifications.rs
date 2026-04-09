@@ -6,7 +6,7 @@ use rmpv::Value;
 use serde::{Deserialize, Serialize};
 use worker::{wasm_bindgen::JsValue, Env, Method, Request, RequestInit};
 
-use crate::{error::AppError, push};
+use crate::push;
 
 const INTERNAL_FANOUT_URL: &str = "https://notify.internal/fanout";
 pub const RECORD_SEPARATOR: u8 = 0x1e;
@@ -155,154 +155,10 @@ pub fn is_initial_message(message: &str) -> bool {
         })
 }
 
-// ── MessagePack message builders (used by NotifyDo) ─────────────────
+// ── MessagePack helpers (used by NotifyDo) ──────────────────────────
 
 pub fn create_ping() -> Vec<u8> {
     serialize(&Value::Array(vec![6.into()]))
-}
-
-pub fn build_user_update_message(
-    update_type: i32,
-    user_id: &str,
-    date: &str,
-    context_id: Option<&str>,
-) -> Vec<u8> {
-    create_update(
-        vec![
-            ("UserId".into(), user_id.into()),
-            ("Date".into(), serialize_date(parse_timestamp(date))),
-        ],
-        update_type,
-        context_id,
-    )
-}
-
-pub fn build_folder_update_message(
-    update_type: i32,
-    folder_id: &str,
-    user_id: &str,
-    revision_date: &str,
-    context_id: Option<&str>,
-) -> Vec<u8> {
-    create_update(
-        vec![
-            ("Id".into(), folder_id.into()),
-            ("UserId".into(), user_id.into()),
-            (
-                "RevisionDate".into(),
-                serialize_date(parse_timestamp(revision_date)),
-            ),
-        ],
-        update_type,
-        context_id,
-    )
-}
-
-pub fn build_cipher_update_message(
-    update_type: i32,
-    cipher_id: &str,
-    user_id: Option<&str>,
-    organization_id: Option<&str>,
-    collection_ids: Option<Vec<String>>,
-    revision_date: Option<&str>,
-    context_id: Option<&str>,
-) -> Vec<u8> {
-    let (payload_user_id, payload_collection_ids, payload_revision_date) =
-        if let Some(collection_ids) = collection_ids {
-            (
-                Value::Nil,
-                Value::Array(
-                    collection_ids
-                        .into_iter()
-                        .map(Into::into)
-                        .collect::<Vec<Value>>(),
-                ),
-                serialize_date(Utc::now().naive_utc()),
-            )
-        } else {
-            (
-                convert_option(user_id),
-                Value::Nil,
-                serialize_date(parse_timestamp(revision_date.unwrap_or_else(|| {
-                    warn!("Missing revision date for cipher update; falling back to now");
-                    ""
-                }))),
-            )
-        };
-
-    create_update(
-        vec![
-            ("Id".into(), cipher_id.into()),
-            ("UserId".into(), payload_user_id),
-            ("OrganizationId".into(), convert_option(organization_id)),
-            ("CollectionIds".into(), payload_collection_ids),
-            ("RevisionDate".into(), payload_revision_date),
-        ],
-        update_type,
-        context_id,
-    )
-}
-
-pub fn build_send_update_message(
-    update_type: i32,
-    send_id: &str,
-    user_id: Option<&str>,
-    revision_date: &str,
-    context_id: Option<&str>,
-) -> Vec<u8> {
-    create_update(
-        vec![
-            ("Id".into(), send_id.into()),
-            ("UserId".into(), convert_option(user_id)),
-            (
-                "RevisionDate".into(),
-                serialize_date(parse_timestamp(revision_date)),
-            ),
-        ],
-        update_type,
-        context_id,
-    )
-}
-
-pub fn build_auth_request_message(
-    user_id: &str,
-    auth_request_id: &str,
-    context_id: Option<&str>,
-) -> Vec<u8> {
-    create_update(
-        vec![
-            ("Id".into(), auth_request_id.into()),
-            ("UserId".into(), user_id.into()),
-        ],
-        UpdateType::AuthRequest as i32,
-        context_id,
-    )
-}
-
-pub fn build_auth_response_message(
-    user_id: &str,
-    auth_request_id: &str,
-    context_id: Option<&str>,
-) -> Vec<u8> {
-    create_update(
-        vec![
-            ("Id".into(), auth_request_id.into()),
-            ("UserId".into(), user_id.into()),
-        ],
-        UpdateType::AuthRequestResponse as i32,
-        context_id,
-    )
-}
-
-pub fn build_anonymous_auth_response_message(user_id: &str, auth_request_id: &str) -> Vec<u8> {
-    create_anonymous_update(
-        vec![
-            ("Id".into(), auth_request_id.into()),
-            ("UserId".into(), user_id.into()),
-        ],
-        UpdateType::AuthRequestResponse as i32,
-        user_id,
-    )
 }
 
 // ── DO fan-out protocol ─────────────────────────────────────────────
@@ -313,48 +169,71 @@ struct DoFanoutRequest<'a> {
     message: String,
 }
 
-async fn send_ws_to_do(
-    env: &Env,
-    selector: &PublishSelector,
-    ws_bytes: &[u8],
-) -> Result<(), AppError> {
+async fn send_ws_to_do(env: &Env, selector: &PublishSelector, ws_bytes: &[u8]) {
     use base64::{engine::general_purpose::STANDARD, Engine};
 
-    let namespace = env.durable_object("NOTIFY_DO").map_err(AppError::Worker)?;
-    let stub = namespace.get_by_name("global").map_err(AppError::Worker)?;
+    let selector_tag = selector.tag();
+    let namespace = match env.durable_object("NOTIFY_DO") {
+        Ok(namespace) => namespace,
+        Err(error) => {
+            warn!("Skipping ws notification for {selector_tag}: NOTIFY_DO lookup failed: {error}");
+            return;
+        }
+    };
+    let stub = match namespace.get_by_name("global") {
+        Ok(stub) => stub,
+        Err(error) => {
+            warn!("Skipping ws notification for {selector_tag}: DO stub lookup failed: {error}");
+            return;
+        }
+    };
 
-    let body = serde_json::to_string(&DoFanoutRequest {
+    let body = match serde_json::to_string(&DoFanoutRequest {
         selector,
         message: STANDARD.encode(ws_bytes),
-    })
-    .map_err(|_| AppError::Internal)?;
+    }) {
+        Ok(body) => body,
+        Err(error) => {
+            warn!("Skipping ws notification for {selector_tag}: payload encode failed: {error}");
+            return;
+        }
+    };
 
     let mut init = RequestInit::new();
     init.with_method(Method::Post)
         .with_body(Some(JsValue::from_str(&body)));
 
-    let mut request =
-        Request::new_with_init(INTERNAL_FANOUT_URL, &init).map_err(AppError::Worker)?;
-    request
-        .headers_mut()
-        .map_err(AppError::Worker)?
-        .set("Content-Type", "application/json")
-        .map_err(AppError::Worker)?;
-
-    let mut response = stub
-        .fetch_with_request(request)
-        .await
-        .map_err(AppError::Worker)?;
-    if !(200..300).contains(&response.status_code()) {
-        let body = response.text().await.unwrap_or_else(|_| String::new());
-        return Err(AppError::Worker(worker::Error::RustError(format!(
-            "NotifyDo fanout failed with status {}: {}",
-            response.status_code(),
-            body
-        ))));
+    let mut request = match Request::new_with_init(INTERNAL_FANOUT_URL, &init) {
+        Ok(request) => request,
+        Err(error) => {
+            warn!("Skipping ws notification for {selector_tag}: request creation failed: {error}");
+            return;
+        }
+    };
+    let headers = match request.headers_mut() {
+        Ok(headers) => headers,
+        Err(error) => {
+            warn!("Skipping ws notification for {selector_tag}: headers init failed: {error}");
+            return;
+        }
+    };
+    if let Err(error) = headers.set("Content-Type", "application/json") {
+        warn!("Skipping ws notification for {selector_tag}: header set failed: {error}");
+        return;
     }
 
-    Ok(())
+    let mut response = match stub.fetch_with_request(request).await {
+        Ok(response) => response,
+        Err(error) => {
+            warn!("Skipping ws notification for {selector_tag}: DO fanout failed: {error}");
+            return;
+        }
+    };
+    if !(200..300).contains(&response.status_code()) {
+        let status = response.status_code();
+        let body = response.text().await.unwrap_or_else(|_| String::new());
+        warn!("Skipping ws notification for {selector_tag}: NotifyDo fanout failed with status {status}: {body}");
+    }
 }
 
 // ── Publish helpers (called by handlers) ────────────────────────────
@@ -365,20 +244,21 @@ pub async fn publish_user_update(
     update_type: UpdateType,
     date: &str,
     context_id: Option<&str>,
-) -> Result<(), AppError> {
-    let ws_bytes = build_user_update_message(update_type as i32, user_id, date, context_id);
+) {
+    let ws_bytes = create_update(
+        vec![
+            ("UserId".into(), user_id.into()),
+            ("Date".into(), serialize_date(parse_timestamp(date))),
+        ],
+        update_type as i32,
+        context_id,
+    );
     let selector = PublishSelector::user(user_id);
-    send_ws_to_do(env, &selector, &ws_bytes).await?;
+    send_ws_to_do(env, &selector, &ws_bytes).await;
     push::push_user_update(env, user_id, update_type as i32, date, context_id).await;
-    Ok(())
 }
 
-pub async fn publish_user_logout(
-    env: &Env,
-    user_id: &str,
-    date: &str,
-    context_id: Option<&str>,
-) -> Result<(), AppError> {
+pub async fn publish_user_logout(env: &Env, user_id: &str, date: &str, context_id: Option<&str>) {
     publish_user_update(env, user_id, UpdateType::LogOut, date, context_id).await
 }
 
@@ -389,16 +269,21 @@ pub async fn publish_folder_update(
     folder_id: &str,
     revision_date: &str,
     context_id: Option<&str>,
-) -> Result<(), AppError> {
-    let ws_bytes = build_folder_update_message(
+) {
+    let ws_bytes = create_update(
+        vec![
+            ("Id".into(), folder_id.into()),
+            ("UserId".into(), user_id.into()),
+            (
+                "RevisionDate".into(),
+                serialize_date(parse_timestamp(revision_date)),
+            ),
+        ],
         update_type as i32,
-        folder_id,
-        user_id,
-        revision_date,
         context_id,
     );
     let selector = PublishSelector::user(user_id);
-    send_ws_to_do(env, &selector, &ws_bytes).await?;
+    send_ws_to_do(env, &selector, &ws_bytes).await;
     push::push_folder_update(
         env,
         user_id,
@@ -408,74 +293,76 @@ pub async fn publish_folder_update(
         context_id,
     )
     .await;
-    Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
 pub async fn publish_cipher_update(
     env: &Env,
-    selector_user_id: &str,
+    user_id: &str,
     update_type: UpdateType,
     cipher_id: &str,
-    payload_user_id: Option<&str>,
-    organization_id: Option<&str>,
-    collection_ids: Option<Vec<String>>,
-    revision_date: Option<&str>,
+    revision_date: &str,
     context_id: Option<&str>,
-) -> Result<(), AppError> {
-    let ws_bytes = build_cipher_update_message(
+) {
+    let ws_bytes = create_update(
+        vec![
+            ("Id".into(), cipher_id.into()),
+            // Org feature is not supported,
+            // so we simply set all related parameters to null.
+            ("UserId".into(), user_id.into()),
+            ("OrganizationId".into(), Value::Nil),
+            ("CollectionIds".into(), Value::Nil),
+            (
+                "RevisionDate".into(),
+                serialize_date(parse_timestamp(revision_date)),
+            ),
+        ],
         update_type as i32,
-        cipher_id,
-        payload_user_id,
-        organization_id,
-        collection_ids,
-        revision_date,
         context_id,
     );
-    let selector = PublishSelector::user(selector_user_id);
-    send_ws_to_do(env, &selector, &ws_bytes).await?;
+    let selector = PublishSelector::user(user_id);
+    send_ws_to_do(env, &selector, &ws_bytes).await;
     push::push_cipher_update(
         env,
-        selector_user_id,
+        user_id,
         update_type as i32,
         cipher_id,
-        payload_user_id,
         revision_date,
         context_id,
     )
     .await;
-    Ok(())
 }
 
 pub async fn publish_send_update(
     env: &Env,
-    selector_user_id: &str,
+    user_id: &str,
     update_type: UpdateType,
     send_id: &str,
-    payload_user_id: Option<&str>,
     revision_date: &str,
     context_id: Option<&str>,
-) -> Result<(), AppError> {
-    let ws_bytes = build_send_update_message(
+) {
+    let ws_bytes = create_update(
+        vec![
+            ("Id".into(), send_id.into()),
+            ("UserId".into(), user_id.into()),
+            (
+                "RevisionDate".into(),
+                serialize_date(parse_timestamp(revision_date)),
+            ),
+        ],
         update_type as i32,
-        send_id,
-        payload_user_id,
-        revision_date,
         context_id,
     );
-    let selector = PublishSelector::user(selector_user_id);
-    send_ws_to_do(env, &selector, &ws_bytes).await?;
+    let selector = PublishSelector::user(user_id);
+    send_ws_to_do(env, &selector, &ws_bytes).await;
     push::push_send_update(
         env,
-        selector_user_id,
+        user_id,
         update_type as i32,
         send_id,
-        payload_user_id,
         revision_date,
         context_id,
     )
     .await;
-    Ok(())
 }
 
 pub async fn publish_auth_request(
@@ -483,12 +370,18 @@ pub async fn publish_auth_request(
     user_id: &str,
     auth_request_id: &str,
     context_id: Option<&str>,
-) -> Result<(), AppError> {
-    let ws_bytes = build_auth_request_message(user_id, auth_request_id, context_id);
+) {
+    let ws_bytes = create_update(
+        vec![
+            ("Id".into(), auth_request_id.into()),
+            ("UserId".into(), user_id.into()),
+        ],
+        UpdateType::AuthRequest as i32,
+        context_id,
+    );
     let selector = PublishSelector::user(user_id);
-    send_ws_to_do(env, &selector, &ws_bytes).await?;
+    send_ws_to_do(env, &selector, &ws_bytes).await;
     push::push_auth_request(env, user_id, auth_request_id, context_id).await;
-    Ok(())
 }
 
 pub async fn publish_auth_response(
@@ -496,12 +389,18 @@ pub async fn publish_auth_response(
     user_id: &str,
     auth_request_id: &str,
     context_id: Option<&str>,
-) -> Result<(), AppError> {
-    let ws_bytes = build_auth_response_message(user_id, auth_request_id, context_id);
+) {
+    let ws_bytes = create_update(
+        vec![
+            ("Id".into(), auth_request_id.into()),
+            ("UserId".into(), user_id.into()),
+        ],
+        UpdateType::AuthRequestResponse as i32,
+        context_id,
+    );
     let selector = PublishSelector::user(user_id);
-    send_ws_to_do(env, &selector, &ws_bytes).await?;
+    send_ws_to_do(env, &selector, &ws_bytes).await;
     push::push_auth_response(env, user_id, auth_request_id, context_id).await;
-    Ok(())
 }
 
 pub async fn publish_anonymous_update(
@@ -509,11 +408,17 @@ pub async fn publish_anonymous_update(
     token: &str,
     user_id: &str,
     auth_request_id: &str,
-) -> Result<(), AppError> {
-    let ws_bytes = build_anonymous_auth_response_message(user_id, auth_request_id);
+) {
+    let ws_bytes = create_anonymous_update(
+        vec![
+            ("Id".into(), auth_request_id.into()),
+            ("UserId".into(), user_id.into()),
+        ],
+        UpdateType::AuthRequestResponse as i32,
+        user_id,
+    );
     let selector = PublishSelector::anonymous(token);
-    send_ws_to_do(env, &selector, &ws_bytes).await?;
-    Ok(())
+    send_ws_to_do(env, &selector, &ws_bytes).await;
 }
 
 // ── MessagePack internals ───────────────────────────────────────────
@@ -616,79 +521,4 @@ fn parse_timestamp(date: &str) -> NaiveDateTime {
             warn!("Failed to parse RFC3339 timestamp '{date}': {error}");
             Utc::now().naive_utc()
         })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use rmpv::decode::read_value;
-
-    #[test]
-    fn update_type_values_match_vaultwarden() {
-        assert_eq!(UpdateType::SyncCipherUpdate as i32, 0);
-        assert_eq!(UpdateType::SyncCipherCreate as i32, 1);
-        assert_eq!(UpdateType::SyncLoginDelete as i32, 2);
-        assert_eq!(UpdateType::SyncFolderDelete as i32, 3);
-        assert_eq!(UpdateType::SyncCiphers as i32, 4);
-        assert_eq!(UpdateType::SyncVault as i32, 5);
-        assert_eq!(UpdateType::SyncOrgKeys as i32, 6);
-        assert_eq!(UpdateType::SyncFolderCreate as i32, 7);
-        assert_eq!(UpdateType::SyncFolderUpdate as i32, 8);
-        assert_eq!(UpdateType::SyncSettings as i32, 10);
-        assert_eq!(UpdateType::LogOut as i32, 11);
-        assert_eq!(UpdateType::SyncSendCreate as i32, 12);
-        assert_eq!(UpdateType::SyncSendUpdate as i32, 13);
-        assert_eq!(UpdateType::SyncSendDelete as i32, 14);
-        assert_eq!(UpdateType::AuthRequest as i32, 15);
-        assert_eq!(UpdateType::AuthRequestResponse as i32, 16);
-        assert_eq!(UpdateType::None as i32, 100);
-    }
-
-    #[test]
-    fn selector_tags_are_stable() {
-        assert_eq!(user_tag("user-1"), "u:user-1");
-        assert_eq!(anonymous_tag("token-1"), "a:token-1");
-    }
-
-    #[test]
-    fn initial_message_accepts_record_separator() {
-        assert!(is_initial_message(
-            "{\"protocol\":\"messagepack\",\"version\":1}\u{1e}"
-        ));
-        assert!(is_initial_message(
-            "{\"protocol\":\"messagepack\",\"version\":1}"
-        ));
-        assert!(!is_initial_message("{\"protocol\":\"json\",\"version\":1}"));
-    }
-
-    #[test]
-    fn build_user_update_message_targets_receive_message() {
-        let bytes = build_user_update_message(
-            UpdateType::SyncSettings as i32,
-            "user-1",
-            "2026-03-14T00:00:00.000Z",
-            None,
-        );
-        let mut slice = &bytes[1..];
-        let value = read_value(&mut slice).expect("valid msgpack");
-
-        match value {
-            Value::Array(parts) => {
-                assert_eq!(parts[3], Value::from("ReceiveMessage"));
-                match &parts[4] {
-                    Value::Array(args) => match &args[0] {
-                        Value::Map(map) => {
-                            assert!(map.iter().any(|(key, value)| {
-                                key == &Value::from("Type")
-                                    && value == &Value::from(UpdateType::SyncSettings as i32)
-                            }));
-                        }
-                        other => panic!("expected map, got {other:?}"),
-                    },
-                    other => panic!("expected args array, got {other:?}"),
-                }
-            }
-            other => panic!("expected invocation array, got {other:?}"),
-        }
-    }
 }

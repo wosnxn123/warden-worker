@@ -240,8 +240,6 @@ pub async fn send_to_push_relay(cfg: &PushConfig, payload: &Value) -> Result<(),
     post_to_relay(&url, &token, payload, false).await
 }
 
-// ── Push payload builders ───────────────────────────────────────────
-
 // In this project, org feature is not supported, so we set organizationId and collectionIds to null
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -249,121 +247,6 @@ pub async fn send_to_push_relay(cfg: &PushConfig, payload: &Value) -> Result<(),
 pub struct DevicePushInfo {
     pub push_uuid: Option<String>,
     pub identifier: String,
-}
-
-pub fn build_cipher_push_payload(
-    user_id: &str,
-    cipher_id: &str,
-    user_id_payload: Option<&str>,
-    revision_date: Option<&str>,
-    update_type: i32,
-    device: Option<&DevicePushInfo>,
-) -> Value {
-    json!({
-        "userId": user_id,
-        "organizationId": null,
-        "deviceId": device.and_then(|d| d.push_uuid.as_deref()),
-        "identifier": device.map(|d| d.identifier.as_str()),
-        "type": update_type,
-        "payload": {
-            "id": cipher_id,
-            "userId": user_id_payload,
-            "organizationId": null,
-            "collectionIds": null,
-            "revisionDate": revision_date,
-        },
-        "clientType": null,
-        "installationId": null,
-    })
-}
-
-pub fn build_user_push_payload(
-    user_id: &str,
-    date: &str,
-    update_type: i32,
-    device: Option<&DevicePushInfo>,
-) -> Value {
-    json!({
-        "userId": user_id,
-        "organizationId": null,
-        "deviceId": device.and_then(|d| d.push_uuid.as_deref()),
-        "identifier": device.map(|d| d.identifier.as_str()),
-        "type": update_type,
-        "payload": {
-            "userId": user_id,
-            "date": date,
-        },
-        "clientType": null,
-        "installationId": null,
-    })
-}
-
-pub fn build_folder_push_payload(
-    user_id: &str,
-    folder_id: &str,
-    revision_date: &str,
-    update_type: i32,
-    device: Option<&DevicePushInfo>,
-) -> Value {
-    json!({
-        "userId": user_id,
-        "organizationId": null,
-        "deviceId": device.and_then(|d| d.push_uuid.as_deref()),
-        "identifier": device.map(|d| d.identifier.as_str()),
-        "type": update_type,
-        "payload": {
-            "id": folder_id,
-            "userId": user_id,
-            "revisionDate": revision_date,
-        },
-        "clientType": null,
-        "installationId": null,
-    })
-}
-
-pub fn build_send_push_payload(
-    user_id: &str,
-    send_id: &str,
-    send_user_id: Option<&str>,
-    revision_date: &str,
-    update_type: i32,
-    device: Option<&DevicePushInfo>,
-) -> Value {
-    json!({
-        "userId": user_id,
-        "organizationId": null,
-        "deviceId": device.and_then(|d| d.push_uuid.as_deref()),
-        "identifier": device.map(|d| d.identifier.as_str()),
-        "type": update_type,
-        "payload": {
-            "id": send_id,
-            "userId": send_user_id,
-            "revisionDate": revision_date,
-        },
-        "clientType": null,
-        "installationId": null,
-    })
-}
-
-pub fn build_auth_request_push_payload(
-    user_id: &str,
-    auth_request_id: &str,
-    update_type: i32,
-    device: Option<&DevicePushInfo>,
-) -> Value {
-    json!({
-        "userId": user_id,
-        "organizationId": null,
-        "deviceId": device.and_then(|d| d.push_uuid.as_deref()),
-        "identifier": device.map(|d| d.identifier.as_str()),
-        "type": update_type,
-        "payload": {
-            "userId": user_id,
-            "id": auth_request_id,
-        },
-        "clientType": null,
-        "installationId": null,
-    })
 }
 
 // ── Internal helpers ────────────────────────────────────────────────
@@ -525,7 +408,19 @@ pub async fn push_user_update(
         return;
     }
     let device = resolve_device_info(env, user_id, context_id).await;
-    let payload = build_user_push_payload(user_id, date, update_type, device.as_ref());
+    let payload = json!({
+        "userId": user_id,
+        "organizationId": null,
+        "deviceId": device.as_ref().and_then(|d| d.push_uuid.as_deref()),
+        "identifier": device.as_ref().map(|d| d.identifier.as_str()),
+        "type": update_type,
+        "payload": {
+            "userId": user_id,
+            "date": date,
+        },
+        "clientType": null,
+        "installationId": null,
+    });
     if let Err(e) = send_to_push_relay(&cfg, &payload).await {
         log::warn!("Push relay failed for user_update: {e}");
     }
@@ -546,13 +441,20 @@ pub async fn push_folder_update(
         return;
     }
     let device = resolve_device_info(env, user_id, context_id).await;
-    let payload = build_folder_push_payload(
-        user_id,
-        folder_id,
-        revision_date,
-        update_type,
-        device.as_ref(),
-    );
+    let payload = json!({
+        "userId": user_id,
+        "organizationId": null,
+        "deviceId": device.as_ref().and_then(|d| d.push_uuid.as_deref()),
+        "identifier": device.as_ref().map(|d| d.identifier.as_str()),
+        "type": update_type,
+        "payload": {
+            "id": folder_id,
+            "userId": user_id,
+            "revisionDate": revision_date,
+        },
+        "clientType": null,
+        "installationId": null,
+    });
     if let Err(e) = send_to_push_relay(&cfg, &payload).await {
         log::warn!("Push relay failed for folder_update: {e}");
     }
@@ -563,36 +465,6 @@ pub async fn push_cipher_update(
     user_id: &str,
     update_type: i32,
     cipher_id: &str,
-    payload_user_id: Option<&str>,
-    revision_date: Option<&str>,
-    context_id: Option<&str>,
-) {
-    let Some(cfg) = try_get_push_config(env) else {
-        return;
-    };
-    if !user_has_push_device(env, user_id).await.unwrap_or(false) {
-        return;
-    }
-    let device = resolve_device_info(env, user_id, context_id).await;
-    let payload = build_cipher_push_payload(
-        user_id,
-        cipher_id,
-        payload_user_id,
-        revision_date,
-        update_type,
-        device.as_ref(),
-    );
-    if let Err(e) = send_to_push_relay(&cfg, &payload).await {
-        log::warn!("Push relay failed for cipher_update: {e}");
-    }
-}
-
-pub async fn push_send_update(
-    env: &Env,
-    user_id: &str,
-    update_type: i32,
-    send_id: &str,
-    payload_user_id: Option<&str>,
     revision_date: &str,
     context_id: Option<&str>,
 ) {
@@ -603,14 +475,56 @@ pub async fn push_send_update(
         return;
     }
     let device = resolve_device_info(env, user_id, context_id).await;
-    let payload = build_send_push_payload(
-        user_id,
-        send_id,
-        payload_user_id,
-        revision_date,
-        update_type,
-        device.as_ref(),
-    );
+    let payload = json!({
+        "userId": user_id,
+        "organizationId": null,
+        "deviceId": device.as_ref().and_then(|d| d.push_uuid.as_deref()),
+        "identifier": device.as_ref().map(|d| d.identifier.as_str()),
+        "type": update_type,
+        "payload": {
+            "id": cipher_id,
+            "userId": user_id,
+            "organizationId": null,
+            "collectionIds": null,
+            "revisionDate": revision_date,
+        },
+        "clientType": null,
+        "installationId": null,
+    });
+    if let Err(e) = send_to_push_relay(&cfg, &payload).await {
+        log::warn!("Push relay failed for cipher_update: {e}");
+    }
+}
+
+pub async fn push_send_update(
+    env: &Env,
+    user_id: &str,
+    update_type: i32,
+    send_id: &str,
+    revision_date: &str,
+    context_id: Option<&str>,
+) {
+    let Some(cfg) = try_get_push_config(env) else {
+        return;
+    };
+    if !user_has_push_device(env, user_id).await.unwrap_or(false) {
+        return;
+    }
+    let device = resolve_device_info(env, user_id, context_id).await;
+    let payload = json!({
+        "userId": user_id,
+        "organizationId": null,
+        "deviceId": device.as_ref().and_then(|d| d.push_uuid.as_deref()),
+        "identifier": device.as_ref().map(|d| d.identifier.as_str()),
+        "type": update_type,
+        "payload": {
+            "id": send_id,
+            "userId": user_id,
+            "revisionDate": revision_date,
+        },
+        "clientType": null,
+        "installationId": null,
+    });
     if let Err(e) = send_to_push_relay(&cfg, &payload).await {
         log::warn!("Push relay failed for send_update: {e}");
     }
@@ -629,7 +543,19 @@ pub async fn push_auth_request(
         return;
     }
     let device = resolve_device_info(env, user_id, context_id).await;
-    let payload = build_auth_request_push_payload(user_id, auth_request_id, 15, device.as_ref());
+    let payload = json!({
+        "userId": user_id,
+        "organizationId": null,
+        "deviceId": device.as_ref().and_then(|d| d.push_uuid.as_deref()),
+        "identifier": device.as_ref().map(|d| d.identifier.as_str()),
+        "type": 15,
+        "payload": {
+            "userId": user_id,
+            "id": auth_request_id,
+        },
+        "clientType": null,
+        "installationId": null,
+    });
     if let Err(e) = send_to_push_relay(&cfg, &payload).await {
         log::warn!("Push relay failed for auth_request: {e}");
     }
@@ -648,7 +574,19 @@ pub async fn push_auth_response(
         return;
     }
     let device = resolve_device_info(env, user_id, context_id).await;
-    let payload = build_auth_request_push_payload(user_id, auth_request_id, 16, device.as_ref());
+    let payload = json!({
+        "userId": user_id,
+        "organizationId": null,
+        "deviceId": device.as_ref().and_then(|d| d.push_uuid.as_deref()),
+        "identifier": device.as_ref().map(|d| d.identifier.as_str()),
+        "type": 16,
+        "payload": {
+            "userId": user_id,
+            "id": auth_request_id,
+        },
+        "clientType": null,
+        "installationId": null,
+    });
     if let Err(e) = send_to_push_relay(&cfg, &payload).await {
         log::warn!("Push relay failed for auth_response: {e}");
     }
