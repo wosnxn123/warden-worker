@@ -4,14 +4,36 @@
  * This wrapper handles WebSocket notification routing and optionally offloads CPU-heavy
  * endpoints to a Rust Durable Object (higher CPU budget).
  *
- * Attachment/send streaming (upload & download) is handled entirely in Rust via
- * handlers::streaming, using zero-copy ReadableStream passthrough to R2/KV.
- *
  * All other requests are passed through to the Rust WASM module.
  */
 
 import RustWorker from "../build/index.js";
-import { decodeJwtPayloadUnsafe } from "./jwt.js";
+
+function base64UrlDecode(str) {
+  let base64 = str.replace(/-/g, "+").replace(/_/g, "/");
+  while (base64.length % 4) {
+    base64 += "=";
+  }
+
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
+
+function decodeJwtPayloadUnsafe(token) {
+  try {
+    const parts = token.split(".");
+    if (parts.length !== 3) {
+      return null;
+    }
+    return JSON.parse(new TextDecoder().decode(base64UrlDecode(parts[1])));
+  } catch {
+    return null;
+  }
+}
 
 function getBearerToken(request) {
   const auth = request.headers.get("Authorization") || request.headers.get("authorization");
