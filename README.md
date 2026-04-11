@@ -87,7 +87,7 @@ The frontend is bundled with the Worker using [Cloudflare Workers Static Assets]
 **UI overrides (optional):**
 - This project ships a small set of "lightweight self-host" UI tweaks in `public/css/`.
 - In CI/CD (and optionally locally), we apply them after extracting `bw_web_builds`:
-  - `bash scripts/apply-web-vault-overrides.sh public/web-vault`
+  - `cp public/css/vaultwarden.css public/web-vault/css/`
 
 > [!NOTE]
 > Migrating from separate frontend deployment? If you previously deployed the frontend separately to Cloudflare Pages, you can delete the `warden-frontend` Pages project and re-setup the router for the worker. The frontend is now bundled with the Worker and no longer requires a separate deployment.
