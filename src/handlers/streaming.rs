@@ -1,7 +1,7 @@
 use jwt_compact::{alg::Hs256Key, AlgorithmExt, UntrustedToken};
 use serde::{Deserialize, Serialize};
 use web_sys::ReadableStream;
-use worker::{Env, Headers, HttpMetadata, Method, Request, Response, Url};
+use worker::{Env, Headers, HttpMetadata, Request, Response, RouteContext, Url};
 
 use crate::{
     auth::jwt_time_options,
@@ -27,140 +27,53 @@ struct KvFileMetadata {
     file_size: i64,
 }
 
-// ── Routing ─────────────────────────────────────────────────────────
+// ── Router handlers (called from worker::Router in lib.rs) ──────────
 
-enum StreamingRoute {
-    AttachmentUpload {
-        cipher_id: String,
-        attachment_id: String,
-        token: String,
-    },
-    AttachmentDownload {
-        cipher_id: String,
-        attachment_id: String,
-        token: String,
-    },
-    SendUpload {
-        send_id: String,
-        file_id: String,
-        token: String,
-    },
-    SendDownload {
-        send_id: String,
-        file_id: String,
-        token: String,
-    },
+pub async fn attachment_upload(req: Request, ctx: RouteContext<()>) -> worker::Result<Response> {
+    let url = req.url()?;
+    let cipher_id = ctx.param("cipher_id").unwrap().to_string();
+    let attachment_id = ctx.param("attachment_id").unwrap().to_string();
+    let token = require_query(&url, "token")?;
+    to_result(handle_attachment_upload(req, &ctx.env, &cipher_id, &attachment_id, &token).await)
 }
 
-pub fn is_streaming_route(method: &Method, path: &str) -> bool {
-    let segs: Vec<&str> = path.trim_matches('/').split('/').collect();
-    match *method {
-        Method::Put => {
-            matches!(
-                segs.as_slice(),
-                ["api", "ciphers", _, "attachment", _, "azure-upload"]
-                    | ["api", "sends", _, "file", _, "azure-upload"]
-            )
-        }
-        Method::Get => {
-            matches!(
-                segs.as_slice(),
-                ["api", "ciphers", _, "attachment", _, "download"]
-            ) || matches!(
-                segs.as_slice(),
-                ["api", "sends", send_id, _file_id] if *send_id != "access" && *send_id != "file"
-            )
-        }
-        _ => false,
-    }
+pub async fn attachment_download(req: Request, ctx: RouteContext<()>) -> worker::Result<Response> {
+    let url = req.url()?;
+    let cipher_id = ctx.param("cipher_id").unwrap().to_string();
+    let attachment_id = ctx.param("attachment_id").unwrap().to_string();
+    let token = require_query(&url, "token")?;
+    to_result(handle_attachment_download(&ctx.env, &cipher_id, &attachment_id, &token).await)
 }
 
-fn parse_route(method: &Method, path: &str, url: &Url) -> Option<StreamingRoute> {
-    let segs: Vec<&str> = path.trim_matches('/').split('/').collect();
-    match *method {
-        Method::Put => match segs.as_slice() {
-            ["api", "ciphers", cid, "attachment", aid, "azure-upload"] => {
-                let token = url.query_pairs().find(|(k, _)| k == "token")?.1;
-                Some(StreamingRoute::AttachmentUpload {
-                    cipher_id: cid.to_string(),
-                    attachment_id: aid.to_string(),
-                    token: token.into_owned(),
-                })
-            }
-            ["api", "sends", sid, "file", fid, "azure-upload"] => {
-                let token = url.query_pairs().find(|(k, _)| k == "token")?.1;
-                Some(StreamingRoute::SendUpload {
-                    send_id: sid.to_string(),
-                    file_id: fid.to_string(),
-                    token: token.into_owned(),
-                })
-            }
-            _ => None,
-        },
-        Method::Get => match segs.as_slice() {
-            ["api", "ciphers", cid, "attachment", aid, "download"] => {
-                let token = url.query_pairs().find(|(k, _)| k == "token")?.1;
-                Some(StreamingRoute::AttachmentDownload {
-                    cipher_id: cid.to_string(),
-                    attachment_id: aid.to_string(),
-                    token: token.into_owned(),
-                })
-            }
-            ["api", "sends", sid, fid] if *sid != "access" && *sid != "file" => {
-                let token = url
-                    .query_pairs()
-                    .find(|(k, _)| k == "t")
-                    .map(|(_, v)| v.into_owned());
-                Some(StreamingRoute::SendDownload {
-                    send_id: sid.to_string(),
-                    file_id: fid.to_string(),
-                    token: token.unwrap_or_default(),
-                })
-            }
-            _ => None,
-        },
-        _ => None,
-    }
+pub async fn send_upload(req: Request, ctx: RouteContext<()>) -> worker::Result<Response> {
+    let url = req.url()?;
+    let send_id = ctx.param("send_id").unwrap().to_string();
+    let file_id = ctx.param("file_id").unwrap().to_string();
+    let token = require_query(&url, "token")?;
+    to_result(handle_send_upload(req, &ctx.env, &send_id, &file_id, &token).await)
 }
 
-// ── Main dispatcher ─────────────────────────────────────────────────
+pub async fn send_download(req: Request, ctx: RouteContext<()>) -> worker::Result<Response> {
+    let url = req.url()?;
+    let send_id = ctx.param("send_id").unwrap().to_string();
+    let file_id = ctx.param("file_id").unwrap().to_string();
+    let token = url
+        .query_pairs()
+        .find(|(k, _)| k == "t")
+        .map(|(_, v)| v.into_owned())
+        .unwrap_or_default();
+    to_result(handle_send_download(&ctx.env, &send_id, &file_id, &token).await)
+}
 
-pub async fn handle(
-    req: Request,
-    env: Env,
-    path: &str,
-    url: &Url,
-) -> Result<web_sys::Response, worker::Error> {
-    let method = req.method();
-    let route = match parse_route(&method, path, url) {
-        Some(r) => r,
-        None => return Ok(json_error("Not found", 404)),
-    };
+fn require_query(url: &Url, key: &str) -> worker::Result<String> {
+    url.query_pairs()
+        .find(|(k, _)| k == key)
+        .map(|(_, v)| v.into_owned())
+        .ok_or_else(|| worker::Error::RustError(format!("Missing query parameter: {key}")))
+}
 
-    let result = match route {
-        StreamingRoute::AttachmentUpload {
-            cipher_id,
-            attachment_id,
-            token,
-        } => handle_attachment_upload(req, &env, &cipher_id, &attachment_id, &token).await,
-        StreamingRoute::AttachmentDownload {
-            cipher_id,
-            attachment_id,
-            token,
-        } => handle_attachment_download(&env, &cipher_id, &attachment_id, &token).await,
-        StreamingRoute::SendUpload {
-            send_id,
-            file_id,
-            token,
-        } => handle_send_upload(req, &env, &send_id, &file_id, &token).await,
-        StreamingRoute::SendDownload {
-            send_id,
-            file_id,
-            token,
-        } => handle_send_download(&env, &send_id, &file_id, &token).await,
-    };
-
-    match result {
+fn to_result(r: Result<Response, AppError>) -> worker::Result<Response> {
+    match r {
         Ok(resp) => Ok(resp),
         Err(e) => Ok(app_error_to_response(&e)),
     }
@@ -174,7 +87,7 @@ async fn handle_attachment_upload(
     cipher_id: &str,
     attachment_id: &str,
     token: &str,
-) -> Result<web_sys::Response, AppError> {
+) -> Result<Response, AppError> {
     let backend = get_storage_backend(env).ok_or_else(|| bad("Attachments are not enabled"))?;
     let db = db::get_db(env)?;
 
@@ -247,7 +160,7 @@ async fn handle_attachment_download(
     cipher_id: &str,
     attachment_id: &str,
     token: &str,
-) -> Result<web_sys::Response, AppError> {
+) -> Result<Response, AppError> {
     let backend = get_storage_backend(env).ok_or_else(|| bad("Attachments are not enabled"))?;
     let db = db::get_db(env)?;
 
@@ -275,7 +188,7 @@ async fn handle_send_upload(
     send_id: &str,
     file_id: &str,
     token: &str,
-) -> Result<web_sys::Response, AppError> {
+) -> Result<Response, AppError> {
     let backend = get_storage_backend(env).ok_or_else(|| bad("File storage is not enabled"))?;
     let db = db::get_db(env)?;
 
@@ -356,7 +269,7 @@ async fn handle_send_download(
     send_id: &str,
     file_id: &str,
     token: &str,
-) -> Result<web_sys::Response, AppError> {
+) -> Result<Response, AppError> {
     let backend = get_storage_backend(env).ok_or_else(|| bad("File storage is not enabled"))?;
     let db = db::get_db(env)?;
 
@@ -452,7 +365,7 @@ async fn stream_download_from_storage(
     backend: StorageBackend,
     key: &str,
     fallback_size: Option<i64>,
-) -> Result<web_sys::Response, AppError> {
+) -> Result<Response, AppError> {
     match backend {
         StorageBackend::R2 => {
             let bucket = env
@@ -481,7 +394,7 @@ async fn stream_download_from_storage(
                 .with_header("content-type", &ct)?
                 .with_header("content-length", &size.to_string())?
                 .body(body);
-            Ok(resp.into())
+            Ok(resp)
         }
         StorageBackend::KV => {
             let kv = env.kv(ATTACHMENTS_KV).map_err(|_| AppError::Internal)?;
@@ -511,7 +424,7 @@ async fn stream_download_from_storage(
                 }
             }
             let resp = builder.stream(stream);
-            Ok(resp.into())
+            Ok(resp)
         }
     }
 }
@@ -569,30 +482,21 @@ fn bad(msg: &str) -> AppError {
     AppError::BadRequest(msg.to_string())
 }
 
-fn json_error(message: &str, status: u16) -> web_sys::Response {
-    let body = serde_json::json!({ "error": message }).to_string();
-    let init = web_sys::ResponseInit::new();
-    init.set_status(status);
-    if let Ok(headers) = web_sys::Headers::new() {
-        let _ = headers.set("content-type", "application/json");
-        init.set_headers(headers.as_ref());
-    }
-    web_sys::Response::new_with_opt_str_and_init(Some(&body), &init)
-        .unwrap_or_else(|_| web_sys::Response::new().unwrap())
+fn app_error_to_response(err: &AppError) -> Response {
+    let (status, msg) = match err {
+        AppError::NotFound(msg) => (404u16, msg.as_str()),
+        AppError::BadRequest(msg) => (400, msg.as_str()),
+        AppError::Unauthorized(msg) => (401, msg.as_str()),
+        AppError::TooManyRequests(msg) => (429, msg.as_str()),
+        _ => (500, "Internal server error"),
+    };
+    Response::from_json(&serde_json::json!({ "error": msg }))
+        .unwrap_or_else(|_| Response::error(msg, status).unwrap())
+        .with_status(status)
 }
 
-fn app_error_to_response(err: &AppError) -> web_sys::Response {
-    match err {
-        AppError::NotFound(msg) => json_error(msg, 404),
-        AppError::BadRequest(msg) => json_error(msg, 400),
-        AppError::Unauthorized(msg) => json_error(msg, 401),
-        AppError::TooManyRequests(msg) => json_error(msg, 429),
-        _ => json_error("Internal server error", 500),
-    }
-}
-
-fn ok_empty(status: u16) -> Result<web_sys::Response, AppError> {
-    let init = web_sys::ResponseInit::new();
-    init.set_status(status);
-    web_sys::Response::new_with_opt_str_and_init(None, &init).map_err(|_| AppError::Internal)
+fn ok_empty(status: u16) -> Result<Response, AppError> {
+    Response::empty()
+        .map(|r| r.with_status(status))
+        .map_err(AppError::Worker)
 }
