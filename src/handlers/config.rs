@@ -64,8 +64,9 @@ pub async fn config(
           "vapidPublicKey": null
         },
         "featureStates": {
-            // "duo-redirect": true,
-            // "flexible-collections-v-1": false
+            "pm-19051-send-email-verification": false,
+            "cxp-import-mobile": true,
+            "cxp-export-mobile": true,
         },
         "object": "config",
     }))
