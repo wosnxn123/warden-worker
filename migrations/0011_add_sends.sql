@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS sends (
   expiration_date TEXT,
   deletion_date TEXT NOT NULL,
   disabled INTEGER NOT NULL DEFAULT 0,
-  hide_email INTEGER
+  hide_email INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_sends_user_id ON sends(user_id);
@@ -45,7 +45,7 @@ CREATE TABLE IF NOT EXISTS sends_pending (
   expiration_date TEXT,
   deletion_date TEXT NOT NULL,
   disabled INTEGER NOT NULL DEFAULT 0,
-  hide_email INTEGER
+  hide_email INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_sends_pending_user_id ON sends_pending(user_id);

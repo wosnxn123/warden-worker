@@ -184,7 +184,7 @@ fn build_send(
     };
     send.expiration_date = expiration_date;
     send.disabled = payload.disabled.unwrap_or(false) as i32;
-    send.hide_email = payload.hide_email.map(|v| v as i32);
+    send.hide_email = payload.hide_email.unwrap_or(false) as i32;
     Ok(send)
 }
 
@@ -205,13 +205,12 @@ fn apply_update(
     send.expiration_date = expiration_date;
     send.deletion_date = deletion_date;
     send.disabled = payload.disabled.unwrap_or(false) as i32;
-    send.hide_email = payload.hide_email.map(|v| v as i32);
+    send.hide_email = payload.hide_email.unwrap_or(false) as i32;
     Ok(())
 }
 
 async fn resolve_creator_identifier(db: &D1Database, send: &SendDB) -> Option<String> {
-    let hide = send.hide_email.unwrap_or(0) != 0;
-    if hide {
+    if send.hide_email != 0 {
         return None;
     }
     #[derive(Deserialize)]

@@ -47,7 +47,7 @@ pub struct SendDB {
     pub expiration_date: Option<String>,
     pub deletion_date: String,
     pub disabled: i32,
-    pub hide_email: Option<i32>,
+    pub hide_email: i32,
 }
 
 // ── Constructor & field mutators ────────────────────────────────────
@@ -80,7 +80,7 @@ impl SendDB {
             expiration_date: None,
             deletion_date,
             disabled: 0,
-            hide_email: None,
+            hide_email: 0,
         }
     }
 
@@ -254,7 +254,7 @@ impl SendDB {
             "expirationDate": self.expiration_date,
             "deletionDate": self.deletion_date,
             "disabled": self.disabled != 0,
-            "hideEmail": self.hide_email.map(|v| v != 0).unwrap_or(false),
+            "hideEmail": self.hide_email != 0,
             "password": self.password_hash,
             "authType": if self.password_hash.is_some() { SendAuthType::Password as i32 } else { SendAuthType::None as i32 },
             "object": "send",
