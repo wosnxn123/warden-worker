@@ -76,7 +76,7 @@ This page covers the two deployment paths. Pick the one that fits your workflow 
    **Optional:** Apply lightweight UI overrides to generate `public/web-vault/css/vaultwarden.css`:
 
    ```bash
-   cp public/css/vaultwarden.css public/web-vault/css/
+   mkdir -p public/web-vault/css/ && cp public/css/vaultwarden.css public/web-vault/css/
    ```
 
 6. **Set up database and deploy the worker:**
