@@ -672,7 +672,8 @@ pub async fn remove_password(
         .await?
         .ok_or_else(|| AppError::BadRequest("Send not found".into()))?;
 
-    send.remove_password(&db).await?;
+    send.set_password(None).await?;
+    send.update(&db).await?;
     db::touch_user_updated_at(&db, &claims.sub, &send.updated_at).await?;
 
     notifications::publish_send_update(
@@ -725,7 +726,7 @@ pub async fn access_send(
     if send.send_type != SendType::File as i32 {
         send.increment_access_count(&db).await?;
     } else {
-        send.touch(&db).await?;
+        send.update(&db).await?;
     }
 
     db::touch_user_updated_at(&db, &send.user_id, &send.updated_at).await?;

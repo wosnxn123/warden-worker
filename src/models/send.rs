@@ -368,37 +368,6 @@ impl SendDB {
         Ok(())
     }
 
-    /// Update only `updated_at` (revision bump without changing other fields).
-    pub async fn touch(&mut self, db: &D1Database) -> Result<(), AppError> {
-        self.updated_at = db::now_string();
-        query!(
-            db,
-            "UPDATE sends SET updated_at = ?1 WHERE id = ?2",
-            self.updated_at,
-            self.id
-        )
-        .map_err(|_| AppError::Database)?
-        .run()
-        .await?;
-        Ok(())
-    }
-
-    pub async fn remove_password(&mut self, db: &D1Database) -> Result<(), AppError> {
-        self.set_password(None).await?;
-        self.updated_at = db::now_string();
-        query!(
-            db,
-            "UPDATE sends SET password_hash = NULL, password_salt = NULL, password_iter = NULL, updated_at = ?1 WHERE id = ?2 AND user_id = ?3",
-            self.updated_at,
-            self.id,
-            self.user_id
-        )
-        .map_err(|_| AppError::Database)?
-        .run()
-        .await?;
-        Ok(())
-    }
-
     // ── Finders (sends table) ───────────────────────────────────────
 
     pub async fn find_by_id(db: &D1Database, id: &str) -> Result<Option<Self>, AppError> {
