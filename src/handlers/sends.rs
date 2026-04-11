@@ -21,10 +21,7 @@ use crate::{
     },
     handlers::get_env_usize,
     models::attachment::display_size,
-    models::send::{
-        validate_send_dates, SendDB, SendRequestData, SEND_INACCESSIBLE_MSG, SEND_TYPE_FILE,
-        SEND_TYPE_TEXT,
-    },
+    models::send::{validate_send_dates, SendDB, SendRequestData, SendType, SEND_INACCESSIBLE_MSG},
     notifications::{self, UpdateType},
     BaseUrl,
 };
@@ -151,10 +148,12 @@ pub fn build_download_token(env: &Env, send_id: &str, file_id: &str) -> Result<S
 // ── Helpers ─────────────────────────────────────────────────────────
 
 fn prepare_send_data(payload: &SendRequestData) -> Result<String, AppError> {
-    let data_val = match payload.send_type {
-        SEND_TYPE_TEXT => payload.text.clone(),
-        SEND_TYPE_FILE => payload.file.clone(),
-        _ => return Err(AppError::BadRequest("Unsupported send type".into())),
+    let data_val = if payload.send_type == SendType::Text as i32 {
+        payload.text.clone()
+    } else if payload.send_type == SendType::File as i32 {
+        payload.file.clone()
+    } else {
+        return Err(AppError::BadRequest("Unsupported send type".into()));
     };
 
     let mut d = data_val.ok_or_else(|| AppError::BadRequest("Send data not provided".into()))?;
@@ -269,7 +268,7 @@ pub async fn create_text_send(
     State(env): State<Arc<Env>>,
     Json(payload): Json<SendRequestData>,
 ) -> Result<Json<Value>, AppError> {
-    if payload.send_type != SEND_TYPE_TEXT {
+    if payload.send_type != SendType::Text as i32 {
         return Err(AppError::BadRequest(
             "Use /api/sends/file/v2 for file sends".into(),
         ));
@@ -315,7 +314,7 @@ pub async fn create_file_send_v2(
     Extension(BaseUrl(base_url)): Extension<BaseUrl>,
     Json(payload): Json<SendRequestData>,
 ) -> Result<Json<SendFileUploadResponse>, AppError> {
-    if payload.send_type != SEND_TYPE_FILE {
+    if payload.send_type != SendType::File as i32 {
         return Err(AppError::BadRequest("Send content is not a file".into()));
     }
 
@@ -438,7 +437,7 @@ pub async fn create_file_send_legacy(
     let payload: SendRequestData = serde_json::from_str(&model_str)
         .map_err(|_| AppError::BadRequest("Invalid send data".into()))?;
 
-    if payload.send_type != SEND_TYPE_FILE {
+    if payload.send_type != SendType::File as i32 {
         return Err(AppError::BadRequest("Send content is not a file".into()));
     }
 
@@ -594,7 +593,7 @@ pub async fn update_send(
         return Err(AppError::BadRequest("Sends can't change type".into()));
     }
 
-    if payload.send_type == SEND_TYPE_TEXT {
+    if payload.send_type == SendType::Text as i32 {
         let data = prepare_send_data(&payload)?;
         let text_limit = send_text_max_bytes(&env);
         if data.len() > text_limit {
@@ -724,7 +723,7 @@ pub async fn access_send(
 
     // Text sends increment access count here; file sends increment on download.
     // Both types get a revision bump and sync notification (aligns with Vaultwarden).
-    if send.send_type != SEND_TYPE_FILE {
+    if send.send_type != SendType::File as i32 {
         send.increment_access_count(&db).await?;
     } else {
         send.touch(&db).await?;
@@ -762,7 +761,7 @@ pub async fn access_file_send(
 
     send.validate_access()?;
 
-    if send.send_type != SEND_TYPE_FILE {
+    if send.send_type != SendType::File as i32 {
         return Err(AppError::NotFound(SEND_INACCESSIBLE_MSG.into()));
     }
 
@@ -830,14 +829,12 @@ pub async fn rotate_user_sends(
 
     let mut statements = Vec::with_capacity(sends.len());
     for send_data in sends {
-        let data = match send_data.send_type {
-            SEND_TYPE_TEXT => {
-                serde_json::to_string(&send_data.text).map_err(|_| AppError::Internal)?
-            }
-            SEND_TYPE_FILE => {
-                serde_json::to_string(&send_data.file).map_err(|_| AppError::Internal)?
-            }
-            _ => continue,
+        let data = if send_data.send_type == SendType::Text as i32 {
+            serde_json::to_string(&send_data.text).map_err(|_| AppError::Internal)?
+        } else if send_data.send_type == SendType::File as i32 {
+            serde_json::to_string(&send_data.file).map_err(|_| AppError::Internal)?
+        } else {
+            continue;
         };
 
         let stmt = worker::query!(

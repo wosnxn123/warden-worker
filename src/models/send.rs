@@ -8,8 +8,19 @@ use crate::handlers::attachments::NumberOrString;
 use crate::models::attachment::display_size;
 use crate::{db, error::AppError};
 
-pub const SEND_TYPE_TEXT: i32 = 0;
-pub const SEND_TYPE_FILE: i32 = 1;
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub enum SendType {
+    Text = 0,
+    File = 1,
+}
+
+pub enum SendAuthType {
+    #[allow(dead_code)]
+    Email = 0, // Not supported
+    Password = 1,
+    None = 2,
+}
+
 pub const SEND_INACCESSIBLE_MSG: &str = "Send does not exist or is no longer available";
 
 const SEND_PBKDF2_ITERATIONS: u32 = 100_000;
@@ -74,7 +85,7 @@ impl SendDB {
     }
 
     /// Hash and store a password, or clear it when `None`.
-    /// Uses Web Crypto PBKDF2 (hardware-accelerated, zero Worker CPU cost).
+    /// Uses Web Crypto PBKDF2
     pub async fn set_password(&mut self, password: Option<&str>) -> Result<(), AppError> {
         match password.filter(|p| !p.is_empty()) {
             Some(pw) => {
@@ -165,7 +176,7 @@ impl SendDB {
 
     /// Extract file_id from the `data` JSON (file-type sends only).
     pub fn file_id(&self) -> Option<String> {
-        if self.send_type != SEND_TYPE_FILE {
+        if self.send_type != SendType::File as i32 {
             return None;
         }
         serde_json::from_str::<Value>(&self.data)
@@ -228,12 +239,14 @@ impl SendDB {
             .unwrap_or(Value::Null);
         Self::normalize_data(&mut data);
 
-        let mut json = serde_json::json!({
+        serde_json::json!({
             "id": self.id,
             "accessId": access_id_from_uuid(&self.id),
             "type": self.send_type,
             "name": self.name,
             "notes": self.notes,
+            "text": if self.send_type == SendType::Text as i32 { Some(&data) } else { None },
+            "file": if self.send_type == SendType::File as i32 { Some(&data) } else { None },
             "key": self.akey,
             "maxAccessCount": self.max_access_count,
             "accessCount": self.access_count,
@@ -243,25 +256,9 @@ impl SendDB {
             "disabled": self.disabled != 0,
             "hideEmail": self.hide_email.map(|v| v != 0).unwrap_or(false),
             "password": self.password_hash,
+            "authType": if self.password_hash.is_some() { SendAuthType::Password as i32 } else { SendAuthType::None as i32 },
             "object": "send",
-        });
-
-        match self.send_type {
-            SEND_TYPE_TEXT => {
-                json["text"] = data;
-                json["file"] = Value::Null;
-            }
-            SEND_TYPE_FILE => {
-                json["text"] = Value::Null;
-                json["file"] = data;
-            }
-            _ => {
-                json["text"] = Value::Null;
-                json["file"] = Value::Null;
-            }
-        }
-
-        json
+        })
     }
 
     pub fn to_access_json(&self, creator_identifier: Option<&str>) -> Value {
@@ -270,31 +267,16 @@ impl SendDB {
             .unwrap_or(Value::Null);
         Self::normalize_data(&mut data);
 
-        let mut json = serde_json::json!({
+        serde_json::json!({
             "id": self.id,
             "type": self.send_type,
             "name": self.name,
+            "text": if self.send_type == SendType::Text as i32 { Some(&data) } else { None },
+            "file": if self.send_type == SendType::File as i32 { Some(&data) } else { None },
             "expirationDate": self.expiration_date,
             "creatorIdentifier": creator_identifier,
             "object": "send-access",
-        });
-
-        match self.send_type {
-            SEND_TYPE_TEXT => {
-                json["text"] = data;
-                json["file"] = Value::Null;
-            }
-            SEND_TYPE_FILE => {
-                json["text"] = Value::Null;
-                json["file"] = data;
-            }
-            _ => {
-                json["text"] = Value::Null;
-                json["file"] = Value::Null;
-            }
-        }
-
-        json
+        })
     }
 }
 
