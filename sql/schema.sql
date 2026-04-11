@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS ciphers (
     favorite BOOLEAN NOT NULL DEFAULT 0,
     folder_id TEXT,
     deleted_at TEXT,
+    archived_at TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,

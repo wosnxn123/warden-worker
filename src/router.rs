@@ -128,6 +128,18 @@ pub fn api_router(env: Env) -> Router {
         .route("/api/ciphers/{id}/restore", put(ciphers::restore_cipher))
         // Cipher bulk restore
         .route("/api/ciphers/restore", put(ciphers::restore_ciphers_bulk))
+        // Cipher archive (sets archived_at)
+        .route("/api/ciphers/{id}/archive", put(ciphers::archive_cipher))
+        .route(
+            "/api/ciphers/{id}/unarchive",
+            put(ciphers::unarchive_cipher),
+        )
+        // Cipher bulk archive
+        .route("/api/ciphers/archive", put(ciphers::archive_ciphers_bulk))
+        .route(
+            "/api/ciphers/unarchive",
+            put(ciphers::unarchive_ciphers_bulk),
+        )
         // Move ciphers to folder
         .route("/api/ciphers/move", post(ciphers::move_cipher_selected))
         .route("/api/ciphers/move", put(ciphers::move_cipher_selected))

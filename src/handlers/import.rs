@@ -141,6 +141,7 @@ pub async fn import_data(
             favorite: import_cipher.favorite.unwrap_or(false),
             folder_id,
             deleted_at: None,
+            archived_at: None,
             created_at: now.clone(),
             updated_at: now.clone(),
             object: "cipher".to_string(),

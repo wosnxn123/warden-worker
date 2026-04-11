@@ -65,6 +65,7 @@ pub async fn config(
         },
         "featureStates": {
             "pm-19051-send-email-verification": false,
+            "pm-19148-innovation-archive": true,
             "cxp-import-mobile": true,
             "cxp-export-mobile": true,
         },

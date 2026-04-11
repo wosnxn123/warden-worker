@@ -72,6 +72,7 @@ pub async fn create_cipher(
         favorite: cipher_data_req.favorite.unwrap_or(false),
         folder_id: cipher_data_req.folder_id.clone(),
         deleted_at: None,
+        archived_at: None,
         created_at: now.clone(),
         updated_at: now.clone(),
         object: "cipher".to_string(),
@@ -191,6 +192,7 @@ pub async fn update_cipher(
         favorite: cipher_data_req.favorite.unwrap_or(false),
         folder_id: cipher_data_req.folder_id.clone(),
         deleted_at: None,
+        archived_at: existing_cipher.archived_at,
         created_at: existing_cipher.created_at,
         updated_at: now.clone(),
         object: "cipher".to_string(),
@@ -241,24 +243,14 @@ pub async fn list_ciphers(
     State(env): State<Arc<Env>>,
 ) -> Result<RawJson, AppError> {
     let db = db::get_db(&env)?;
-    let include_attachments = attachments::attachments_enabled(env.as_ref());
-    let force_row_query = super::ciphers_default_row_query(env.as_ref());
-    // Response schema: {"data":[...],"object":"list","continuationToken":null}
-    let mut response = String::new();
-    response.push_str("{\"data\":");
-    append_cipher_json_array_raw(
-        &mut response,
+    build_cipher_list_response(
         &db,
-        include_attachments,
+        env.as_ref(),
         "WHERE c.user_id = ?1 AND c.deleted_at IS NULL",
         &[claims.sub.clone().into()],
         "ORDER BY c.updated_at DESC",
-        force_row_query,
     )
-    .await?;
-    response.push_str(",\"object\":\"list\",\"continuationToken\":null}");
-
-    Ok(RawJson(response))
+    .await
 }
 
 /// GET /api/ciphers/{id}
@@ -583,8 +575,139 @@ pub async fn restore_ciphers_bulk(
     .await
     .map_err(db::map_d1_json_error)?;
 
-    let include_attachments = attachments::attachments_enabled(env.as_ref());
-    let force_row_query = super::ciphers_default_row_query(env.as_ref());
+    db::touch_user_updated_at(&db, &claims.sub, &now).await?;
+
+    notifications::publish_user_update(
+        env.as_ref(),
+        &claims.sub,
+        UpdateType::SyncCiphers,
+        &now,
+        Some(&claims.device),
+    )
+    .await;
+
+    build_cipher_list_response(
+        &db,
+        env.as_ref(),
+        "WHERE c.user_id = ?1 AND c.id IN (SELECT value FROM json_each(?2, '$.ids'))",
+        &[claims.sub.clone().into(), body.clone().into()],
+        "",
+    )
+    .await
+}
+
+/// Archive a single cipher (PUT /api/ciphers/{id}/archive)
+#[worker::send]
+pub async fn archive_cipher(
+    claims: Claims,
+    State(env): State<Arc<Env>>,
+    Path(id): Path<String>,
+) -> Result<Json<Cipher>, AppError> {
+    let db = db::get_db(&env)?;
+    fetch_cipher_for_user(&db, &id, &claims.sub).await.map_err(|_| {
+        AppError::BadRequest(
+            "Cipher was not archived. Ensure the provided ID is correct and you have permission to archive it.".to_string(),
+        )
+    })?;
+    let now = db::now_string();
+
+    query!(
+        &db,
+        "UPDATE ciphers SET archived_at = ?1, updated_at = ?1 WHERE id = ?2 AND user_id = ?3",
+        now,
+        id,
+        claims.sub
+    )
+    .map_err(|_| AppError::Database)?
+    .run()
+    .await?;
+
+    let updated = fetch_cipher_for_user(&db, &id, &claims.sub).await?;
+    let mut cipher: Cipher = updated.into();
+    attachments::hydrate_cipher_attachments(&db, env.as_ref(), &mut cipher).await?;
+
+    db::touch_user_updated_at(&db, &claims.sub, &cipher.updated_at).await?;
+
+    notifications::publish_cipher_update(
+        env.as_ref(),
+        &claims.sub,
+        UpdateType::SyncCipherUpdate,
+        &cipher.id,
+        &cipher.updated_at,
+        Some(&claims.device),
+    )
+    .await;
+
+    Ok(Json(cipher))
+}
+
+/// Unarchive a single cipher (PUT /api/ciphers/{id}/unarchive)
+#[worker::send]
+pub async fn unarchive_cipher(
+    claims: Claims,
+    State(env): State<Arc<Env>>,
+    Path(id): Path<String>,
+) -> Result<Json<Cipher>, AppError> {
+    let db = db::get_db(&env)?;
+    fetch_cipher_for_user(&db, &id, &claims.sub).await.map_err(|_| {
+        AppError::BadRequest(
+            "Cipher was not unarchived. Ensure the provided ID is correct and you have permission to unarchive it.".to_string(),
+        )
+    })?;
+    let now = db::now_string();
+
+    query!(
+        &db,
+        "UPDATE ciphers SET archived_at = NULL, updated_at = ?1 WHERE id = ?2 AND user_id = ?3",
+        now,
+        id,
+        claims.sub
+    )
+    .map_err(|_| AppError::Database)?
+    .run()
+    .await?;
+
+    let updated = fetch_cipher_for_user(&db, &id, &claims.sub).await?;
+    let mut cipher: Cipher = updated.into();
+    attachments::hydrate_cipher_attachments(&db, env.as_ref(), &mut cipher).await?;
+
+    db::touch_user_updated_at(&db, &claims.sub, &cipher.updated_at).await?;
+
+    notifications::publish_cipher_update(
+        env.as_ref(),
+        &claims.sub,
+        UpdateType::SyncCipherUpdate,
+        &cipher.id,
+        &cipher.updated_at,
+        Some(&claims.device),
+    )
+    .await;
+
+    Ok(Json(cipher))
+}
+
+/// Archive multiple ciphers (PUT /api/ciphers/archive)
+/// Expected JSON: {"ids": ["cipher_id1", "cipher_id2", ...]}
+#[worker::send]
+pub async fn archive_ciphers_bulk(
+    claims: Claims,
+    State(env): State<Arc<Env>>,
+    body: String,
+) -> Result<RawJson, AppError> {
+    let db = db::get_db(&env)?;
+    let now = db::now_string();
+
+    query!(
+        &db,
+        "UPDATE ciphers SET archived_at = ?1, updated_at = ?1 WHERE user_id = ?2 AND id IN (SELECT value FROM json_each(?3, '$.ids'))",
+        now,
+        claims.sub,
+        body
+    )
+    .map_err(|_| AppError::Database)?
+    .run()
+    .await
+    .map_err(db::map_d1_json_error)?;
 
     db::touch_user_updated_at(&db, &claims.sub, &now).await?;
 
@@ -597,23 +720,58 @@ pub async fn restore_ciphers_bulk(
     )
     .await;
 
-    // Build response JSON via string concatenation (no parsing!)
-    // Response schema: {"data":[...],"object":"list","continuationToken":null}
-    let mut response = String::new();
-    response.push_str("{\"data\":");
-    append_cipher_json_array_raw(
-        &mut response,
+    build_cipher_list_response(
         &db,
-        include_attachments,
+        env.as_ref(),
         "WHERE c.user_id = ?1 AND c.id IN (SELECT value FROM json_each(?2, '$.ids'))",
         &[claims.sub.clone().into(), body.clone().into()],
         "",
-        force_row_query,
     )
-    .await?;
-    response.push_str(",\"object\":\"list\",\"continuationToken\":null}");
+    .await
+}
 
-    Ok(RawJson(response))
+/// Unarchive multiple ciphers (PUT /api/ciphers/unarchive)
+/// Expected JSON: {"ids": ["cipher_id1", "cipher_id2", ...]}
+#[worker::send]
+pub async fn unarchive_ciphers_bulk(
+    claims: Claims,
+    State(env): State<Arc<Env>>,
+    body: String,
+) -> Result<RawJson, AppError> {
+    let db = db::get_db(&env)?;
+    let now = db::now_string();
+
+    query!(
+        &db,
+        "UPDATE ciphers SET archived_at = NULL, updated_at = ?1 WHERE user_id = ?2 AND id IN (SELECT value FROM json_each(?3, '$.ids'))",
+        now,
+        claims.sub,
+        body
+    )
+    .map_err(|_| AppError::Database)?
+    .run()
+    .await
+    .map_err(db::map_d1_json_error)?;
+
+    db::touch_user_updated_at(&db, &claims.sub, &now).await?;
+
+    notifications::publish_user_update(
+        env.as_ref(),
+        &claims.sub,
+        UpdateType::SyncCiphers,
+        &now,
+        Some(&claims.device),
+    )
+    .await;
+
+    build_cipher_list_response(
+        &db,
+        env.as_ref(),
+        "WHERE c.user_id = ?1 AND c.id IN (SELECT value FROM json_each(?2, '$.ids'))",
+        &[claims.sub.clone().into(), body.clone().into()],
+        "",
+    )
+    .await
 }
 
 /// Handler for POST /api/ciphers
@@ -644,6 +802,7 @@ pub async fn create_cipher_simple(
         favorite: payload.favorite.unwrap_or(false),
         folder_id: payload.folder_id.clone(),
         deleted_at: None,
+        archived_at: None,
         created_at: now.clone(),
         updated_at: now.clone(),
         object: "cipher".to_string(),
@@ -871,6 +1030,7 @@ fn cipher_json_expr(attachments_enabled: bool) -> String {
             'revisionDate', c.updated_at,
             'creationDate', c.created_at,
             'deletedDate', c.deleted_at,
+            'archivedDate', c.archived_at,
             'attachments', {attachments_expr},
             'name', json_extract(c.data, '$.name'),
             'notes', json_extract(c.data, '$.notes'),
@@ -930,6 +1090,33 @@ fn cipher_json_rows_sql(
 fn is_sqlite_toobig(err: &worker::Error) -> bool {
     let msg = err.to_string().to_ascii_lowercase();
     msg.contains("sqlite_toobig") || msg.contains("string or blob too big")
+}
+
+/// Build a `{"data":[...],"object":"list","continuationToken":null}` response
+/// using raw SQL JSON construction (no Rust-side parsing).
+async fn build_cipher_list_response(
+    db: &worker::D1Database,
+    env: &Env,
+    where_clause: &str,
+    params: &[JsValue],
+    order_clause: &str,
+) -> Result<RawJson, AppError> {
+    let include_attachments = attachments::attachments_enabled(env);
+    let force_row_query = super::ciphers_default_row_query(env);
+    let mut response = String::new();
+    response.push_str("{\"data\":");
+    append_cipher_json_array_raw(
+        &mut response,
+        db,
+        include_attachments,
+        where_clause,
+        params,
+        order_clause,
+        force_row_query,
+    )
+    .await?;
+    response.push_str(",\"object\":\"list\",\"continuationToken\":null}");
+    Ok(RawJson(response))
 }
 
 /// Append ciphers JSON array to an existing buffer.
