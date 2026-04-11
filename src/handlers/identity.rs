@@ -254,7 +254,7 @@ async fn maybe_upgrade_password_hash(
     let new_salt = generate_salt()?;
     let new_hash =
         hash_password_for_storage(password_hash, &new_salt, desired_iterations as u32).await?;
-    let now = Utc::now().to_rfc3339();
+    let now = db::now_string();
 
     query!(
         db,

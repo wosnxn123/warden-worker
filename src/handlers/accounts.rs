@@ -1,5 +1,4 @@
 use axum::{extract::State, http::HeaderMap, Json};
-use chrono::Utc;
 use glob_match::glob_match;
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -239,7 +238,7 @@ pub async fn register(
     .await?;
 
     let db = db::get_db(&env)?;
-    let now = Utc::now().to_rfc3339();
+    let now = db::now_string();
 
     // Only store kdf_memory and kdf_parallelism for Argon2id, clear for PBKDF2
     let (kdf_memory, kdf_parallelism) = if payload.kdf == KDF_TYPE_ARGON2ID {
@@ -474,7 +473,7 @@ pub async fn post_profile(
         .ok_or_else(|| AppError::NotFound("User not found".to_string()))?;
 
     let mut user: User = serde_json::from_value(user_value).map_err(|_| AppError::Internal)?;
-    let now = Utc::now().to_rfc3339();
+    let now = db::now_string();
 
     user.name = Some(payload.name);
     user.updated_at = now.clone();
@@ -542,7 +541,7 @@ pub async fn put_avatar(
         .ok_or_else(|| AppError::NotFound("User not found".to_string()))?;
 
     let mut user: User = serde_json::from_value(user_value).map_err(|_| AppError::Internal)?;
-    let now = Utc::now().to_rfc3339();
+    let now = db::now_string();
 
     user.avatar_color = payload.avatar_color;
     user.updated_at = now.clone();
@@ -676,7 +675,7 @@ pub async fn post_password(
 
     // Generate new security stamp and update timestamp
     let new_security_stamp = Uuid::new_v4().to_string();
-    let now = Utc::now().to_rfc3339();
+    let now = db::now_string();
 
     // Update user record
     query!(
@@ -1063,7 +1062,7 @@ pub async fn post_kdf(
 
     // Generate new security stamp
     let new_security_stamp = Uuid::new_v4().to_string();
-    let now = Utc::now().to_rfc3339();
+    let now = db::now_string();
 
     // Determine kdf_memory and kdf_parallelism based on KDF type
     let (final_kdf_memory, final_kdf_parallelism) = if kdf_type == KDF_TYPE_ARGON2ID {
@@ -1137,7 +1136,7 @@ pub async fn post_sstamp(
 
     // Rotate the security stamp so all existing access tokens become invalid immediately
     let new_security_stamp = Uuid::new_v4().to_string();
-    let now = Utc::now().to_rfc3339();
+    let now = db::now_string();
 
     query!(
         &db,
