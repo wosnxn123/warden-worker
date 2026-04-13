@@ -12,7 +12,7 @@ jobs:
     env:
       # Pin tool versions to avoid upstream updates breaking CI
       WORKER_BUILD_VERSION: "0.8.0"
-      WRANGLER_VERSION: "4.54.0"
+      WRANGLER_VERSION: "4.82.1"
       # Web Vault frontend (bw_web_builds) version tag (default pinned; override via GitHub Actions Variables)
       # - Set repository variable BW_WEB_VERSION_DEV (e.g. v2026.1.1) to override
       # - Set to "latest" to follow the latest bw_web_builds release
@@ -26,9 +26,9 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Set up Node.js (for npx wrangler)
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
         with:
-          node-version: "20"
+          node-version: "24"
 
       - name: Install Rust toolchain (from rust-toolchain.toml)
         run: |
