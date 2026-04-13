@@ -1,7 +1,7 @@
 use jwt_compact::{alg::Hs256Key, AlgorithmExt, UntrustedToken};
 use serde::{Deserialize, Serialize};
 use web_sys::ReadableStream;
-use worker::{Env, Headers, HttpMetadata, Request, Response, RouteContext, Url};
+use worker::{Env, Headers, HttpMetadata, Method, Request, Response, Url};
 
 use crate::{
     auth::jwt_time_options,
@@ -27,56 +27,72 @@ struct KvFileMetadata {
     file_size: i64,
 }
 
-// ── Router handlers (called from worker::Router in lib.rs) ──────────
+// ── Routing ─────────────────────────────────────────────────────────
 
-pub async fn attachment_upload(req: Request, ctx: RouteContext<()>) -> worker::Result<Response> {
-    let url = req.url()?;
-    let cipher_id = ctx.param("cipher_id").unwrap().to_string();
-    let attachment_id = ctx.param("attachment_id").unwrap().to_string();
-    let token = require_query(&url, "token")?;
-    to_result(handle_attachment_upload(req, &ctx.env, &cipher_id, &attachment_id, &token).await)
+pub fn is_streaming_route(method: &Method, path: &str) -> bool {
+    let segs: Vec<&str> = path.trim_matches('/').split('/').collect();
+    match *method {
+        Method::Put => {
+            matches!(
+                segs.as_slice(),
+                ["api", "ciphers", _, "attachment", _, "azure-upload"]
+                    | ["api", "sends", _, "file", _, "azure-upload"]
+            )
+        }
+        Method::Get => {
+            matches!(
+                segs.as_slice(),
+                ["api", "ciphers", _, "attachment", _, "download"]
+            ) || matches!(
+                segs.as_slice(),
+                ["api", "sends", send_id, _file_id] if *send_id != "access" && *send_id != "file"
+            )
+        }
+        _ => false,
+    }
 }
 
-pub async fn attachment_download(req: Request, ctx: RouteContext<()>) -> worker::Result<Response> {
-    let url = req.url()?;
-    let cipher_id = ctx.param("cipher_id").unwrap().to_string();
-    let attachment_id = ctx.param("attachment_id").unwrap().to_string();
-    let token = require_query(&url, "token")?;
-    to_result(handle_attachment_download(&ctx.env, &cipher_id, &attachment_id, &token).await)
+pub async fn handle(req: Request, env: &Env, method: &Method, path: &str, url: &Url) -> Response {
+    let segs: Vec<&str> = path.trim_matches('/').split('/').collect();
+
+    let result = match (method, segs.as_slice()) {
+        (&Method::Put, ["api", "ciphers", cid, "attachment", aid, "azure-upload"]) => {
+            match query_param(url, "token") {
+                Some(token) => handle_attachment_upload(req, env, cid, aid, &token).await,
+                None => Err(bad("Missing query parameter: token")),
+            }
+        }
+        (&Method::Get, ["api", "ciphers", cid, "attachment", aid, "download"]) => {
+            match query_param(url, "token") {
+                Some(token) => handle_attachment_download(env, cid, aid, &token).await,
+                None => Err(bad("Missing query parameter: token")),
+            }
+        }
+        (&Method::Put, ["api", "sends", sid, "file", fid, "azure-upload"]) => {
+            match query_param(url, "token") {
+                Some(token) => handle_send_upload(req, env, sid, fid, &token).await,
+                None => Err(bad("Missing query parameter: token")),
+            }
+        }
+        (&Method::Get, ["api", "sends", sid, fid])
+            if *sid != "access" && *sid != "file" =>
+        {
+            let token = query_param(url, "t").unwrap_or_default();
+            handle_send_download(env, sid, fid, &token).await
+        }
+        _ => Err(AppError::NotFound("Not found".into())),
+    };
+
+    match result {
+        Ok(resp) => resp,
+        Err(e) => app_error_to_response(&e),
+    }
 }
 
-pub async fn send_upload(req: Request, ctx: RouteContext<()>) -> worker::Result<Response> {
-    let url = req.url()?;
-    let send_id = ctx.param("send_id").unwrap().to_string();
-    let file_id = ctx.param("file_id").unwrap().to_string();
-    let token = require_query(&url, "token")?;
-    to_result(handle_send_upload(req, &ctx.env, &send_id, &file_id, &token).await)
-}
-
-pub async fn send_download(req: Request, ctx: RouteContext<()>) -> worker::Result<Response> {
-    let url = req.url()?;
-    let send_id = ctx.param("send_id").unwrap().to_string();
-    let file_id = ctx.param("file_id").unwrap().to_string();
-    let token = url
-        .query_pairs()
-        .find(|(k, _)| k == "t")
-        .map(|(_, v)| v.into_owned())
-        .unwrap_or_default();
-    to_result(handle_send_download(&ctx.env, &send_id, &file_id, &token).await)
-}
-
-fn require_query(url: &Url, key: &str) -> worker::Result<String> {
+fn query_param(url: &Url, key: &str) -> Option<String> {
     url.query_pairs()
         .find(|(k, _)| k == key)
         .map(|(_, v)| v.into_owned())
-        .ok_or_else(|| worker::Error::RustError(format!("Missing query parameter: {key}")))
-}
-
-fn to_result(r: Result<Response, AppError>) -> worker::Result<Response> {
-    match r {
-        Ok(resp) => Ok(resp),
-        Err(e) => Ok(app_error_to_response(&e)),
-    }
 }
 
 // ── Attachment upload ───────────────────────────────────────────────

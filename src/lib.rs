@@ -21,39 +21,18 @@ mod router;
 pub struct BaseUrl(pub String);
 
 #[event(fetch)]
-pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
+pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<web_sys::Response> {
     console_error_panic_hook::set_once();
     let _ = console_log::init_with_level(log::Level::Debug);
 
-    Router::new()
-        .put_async(
-            "/api/ciphers/:cipher_id/attachment/:attachment_id/azure-upload",
-            handlers::streaming::attachment_upload,
-        )
-        .get_async(
-            "/api/ciphers/:cipher_id/attachment/:attachment_id/download",
-            handlers::streaming::attachment_download,
-        )
-        .put_async(
-            "/api/sends/:send_id/file/:file_id/azure-upload",
-            handlers::streaming::send_upload,
-        )
-        // Send file download is GET-only streaming, but this 4-segment pattern
-        // also matches POST /api/sends/file/v2.
-        // Registering via get_async would put it in the GET trie, causing the
-        // Router's 405 check (which runs BEFORE or_else_any_method) to reject
-        // valid non-GET requests. So we also register a POST route handled by axum_fallback.
-        .get_async(
-            "/api/sends/:send_id/:file_id",
-            handlers::streaming::send_download,
-        )
-        .post_async("/api/sends/:send_id/:file_id", axum_fallback)
-        .or_else_any_method_async("/*catchall", axum_fallback)
-        .run(req, env)
-        .await
-}
+    let url = req.url()?;
+    let method = req.method();
+    let path = url.path().to_string();
 
-async fn axum_fallback(req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    if handlers::streaming::is_streaming_route(&method, &path) {
+        return Ok(handlers::streaming::handle(req, &env, &method, &path, &url).await.into());
+    }
+
     let http_req: HttpRequest = req.try_into()?;
 
     let uri = http_req.uri().clone();
@@ -63,7 +42,7 @@ async fn axum_fallback(req: Request, ctx: RouteContext<()>) -> Result<Response> 
         uri.authority().map(|a| a.as_str()).unwrap_or("localhost")
     );
 
-    let env = Arc::new(ctx.env);
+    let env = Arc::new(env);
 
     let cors = CorsLayer::new()
         .allow_methods(Any)
@@ -77,8 +56,8 @@ async fn axum_fallback(req: Request, ctx: RouteContext<()>) -> Result<Response> 
         .layer(cors)
         .layer(DefaultBodyLimit::max(BODY_LIMIT));
 
-    let http_resp = app.call(http_req).await?;
-    http_resp.try_into()
+    let resp = app.call(http_req).await?;
+    worker::response_to_wasm(resp)
 }
 
 /// Scheduled event handler for cron-triggered tasks.
