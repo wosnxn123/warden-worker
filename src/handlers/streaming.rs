@@ -74,9 +74,7 @@ pub async fn handle(req: Request, env: &Env, method: &Method, path: &str, url: &
                 None => Err(bad("Missing query parameter: token")),
             }
         }
-        (&Method::Get, ["api", "sends", sid, fid])
-            if *sid != "access" && *sid != "file" =>
-        {
+        (&Method::Get, ["api", "sends", sid, fid]) if *sid != "access" && *sid != "file" => {
             let token = query_param(url, "t").unwrap_or_default();
             handle_send_download(env, sid, fid, &token).await
         }

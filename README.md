@@ -203,6 +203,11 @@ For detailed configuration and troubleshooting, see the [Vaultwarden wiki on pus
 
 Configure environment variables in `wrangler.toml` under `[vars]`, or set them via Cloudflare Dashboard:
 
+* **`BASE_URL`** (Optional):
+  - Overrides the extracted base URL for up/down URLs for files.
+  - Format: Include HTTPS protocol, domain, and port (if using non-443 reverse proxy). Do not include any trailing path.
+  - Example: `https://vault.example.com` or `https://vault.example.com:8443`
+  - If not set, falls back to extracting from the incoming request.
 * **`PASSWORD_ITERATIONS`** (Optional, Default: `600000`):
   - PBKDF2 iterations for server-side password hashing.
   - Minimum is 600000.

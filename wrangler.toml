@@ -48,6 +48,10 @@ html_handling = "auto-trailing-slash"
 run_worker_first = ["/api/*", "/identity/*", "/notifications/*"]
 
 [vars]
+# Base URL for the worker, used for generating up/down URLs for files.
+# If not set, the base URL will be extracted from the incoming request.
+# BASE_URL = "https://vault.example.com"
+
 # Server-side password hashing PBKDF2 iterations (stored per-user).
 # Defaults to 600000, and will be clamped to a minimum of 600000 even if set lower.
 # Existing users whose password iterations are less than this value will be upgraded on login.

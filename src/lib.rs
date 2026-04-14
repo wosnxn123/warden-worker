@@ -30,17 +30,25 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<web_sys::Resp
     let path = url.path().to_string();
 
     if handlers::streaming::is_streaming_route(&method, &path) {
-        return Ok(handlers::streaming::handle(req, &env, &method, &path, &url).await.into());
+        return Ok(handlers::streaming::handle(req, &env, &method, &path, &url)
+            .await
+            .into());
     }
 
     let http_req: HttpRequest = req.try_into()?;
 
-    let uri = http_req.uri().clone();
-    let base_url = format!(
-        "{}://{}",
-        uri.scheme_str().unwrap_or("https"),
-        uri.authority().map(|a| a.as_str()).unwrap_or("localhost")
-    );
+    let base_url = env
+        .var("BASE_URL")
+        .ok()
+        .map(|v| v.to_string().trim_end_matches('/').to_string())
+        .unwrap_or_else(|| {
+            let uri = http_req.uri().clone();
+            format!(
+                "{}://{}",
+                uri.scheme_str().unwrap_or("https"),
+                uri.authority().map(|a| a.as_str()).unwrap_or("localhost")
+            )
+        });
 
     let env = Arc::new(env);
 
