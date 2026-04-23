@@ -815,11 +815,10 @@ pub async fn rotate_user_sends(
         .iter()
         .map(|s| {
             s.id.as_ref()
-                .ok_or(AppError::BadRequest("Each send must have an id".into()))
-                .unwrap()
-                .as_str()
+                .ok_or_else(|| AppError::BadRequest("Each send must have an id".into()))
+                .map(|id| id.as_str())
         })
-        .collect();
+        .collect::<Result<_, _>>()?;
 
     if db_ids.len() != req_ids.len() || db_ids != req_ids {
         return Err(AppError::BadRequest(
