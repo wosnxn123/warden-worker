@@ -1,4 +1,6 @@
 name: Backup D1 Database (S3/WebDAV)
+permissions:
+    contents: read
 
 on:
     schedule:
