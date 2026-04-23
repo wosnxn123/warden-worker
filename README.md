@@ -16,6 +16,7 @@ Warden aims to solve this problem by leveraging the Cloudflare Workers ecosystem
 
 * **Core Vault Functionality:** Create, read, update, and delete ciphers and folders.
 * **File Attachments:** Optional Cloudflare KV or R2 storage for attachments.
+* **Bitwarden Send:** Share encrypted text or files via a link.
 * **Device Management:** View and revoke active sessions.
 * **Live Sync & Push Notifications:** Real-time vault updates via WebSocket and mobile push.
 * **TOTP Support:** Store and generate Time-based One-Time Passwords.
@@ -39,13 +40,21 @@ Warden supports file attachments using either **Cloudflare KV** or **Cloudflare 
 
 See the [deployment guide](docs/deployment.md) for setup details. R2 may incur additional costs; see [Cloudflare R2 pricing](https://developers.cloudflare.com/r2/pricing/).
 
+### Bitwarden Send
+
+- **Text Send:** Enabled by default, no extra configuration required.
+- **File Send:** Requires a storage backend (KV or R2), same as [attachments](#attachments-support).
+
+> [!NOTE]
+> Due to the D1 single-row size limit of 2 MB, the maximum text Send size is approximately **1.8 MiB**. Additionally, the `/api/sync` endpoint serializes all of the current user's Sends into the response. A large number of Sends or very large text Sends will significantly increase CPU time and response size.
+
+
 ## Current Status
 
 **This project is not yet feature-complete**, ~~and it may never be~~. It currently supports the core functionality of a personal vault, including TOTP. However, it does **not** support the following features:
 
 * Sharing
 * 2FA login (except TOTP)
-* Bitwarden Send
 * Emergency access
 * Admin operations
 * Organizations
@@ -55,9 +64,9 @@ There are no immediate plans to implement these features. The primary goal of th
 
 ## Compatibility
 
-* **Browser Extensions:** Chrome, Firefox, Safari, etc. (Tested 2025.11.1 on Chrome)
-* **Android App:** The official Bitwarden Android app. (Tested 2025.11.0)
-* **iOS App:** The official Bitwarden iOS app. (Tested 2025.11.0)
+* **Browser Extensions:** Chrome, Firefox, Safari, etc. (Tested 2026.3.0 on Chrome)
+* **Android App:** The official Bitwarden Android app. (Tested 2026.3.1)
+* **iOS App:** The official Bitwarden iOS app. (Tested 2026.4.0)
 
 ## Demo
 
@@ -229,6 +238,14 @@ Configure environment variables in `wrangler.toml` under `[vars]`, or set them v
   - Example: `1048576` for 1GB.
 * **`ATTACHMENT_TTL_SECS`** (Optional, Default: `300`, Minimum: `60`): 
   - TTL for attachment upload/download URLs.
+* **`SEND_TEXT_MAX_BYTES`** (Optional, Default: `1887436` ≈ 1.8 MiB):
+  - Max size for text Send content. Constrained by D1's 2 MB single-row limit.
+* **`SEND_MAX_BYTES`** (Optional, Default: `104857600` = 100 MiB):
+  - Max file size for file Sends. Subject to the same KV/R2 limits as attachments.
+* **`USER_SEND_LIMIT_KB`** (Optional):
+  - Max total Send file storage per user in KB.
+* **`SEND_TTL_SECS`** (Optional, Default: `300`):
+  - TTL for Send file upload/download URLs.
 
 ### Scheduled Tasks (Cron)
 
@@ -286,6 +303,17 @@ sqlite3 .wrangler/state/v3/d1/miniflare-D1DatabaseObject/*.sqlite
 
 > [!NOTE]
 > Local dev requires Node.js and Wrangler. The Worker runs in a simulated environment via [workerd](https://github.com/cloudflare/workerd).
+
+## Updating Your Fork
+
+If you deployed via a GitHub fork, keeping up to date is straightforward:
+
+1. **Watch for new releases** — On [this repository](https://github.com/qaz741wsd856/warden-worker), click **Watch** → **Custom** → check **Releases**. You'll be notified when a new version is published.
+2. **Sync your fork** — Go to your fork on GitHub, click **Sync fork** → **Update branch**. This pulls the latest changes from upstream into your fork's default branch.
+3. **Automatic deployment** — If you set up CI/CD via GitHub Actions, the push-to-main workflow will automatically build and deploy the new version to your Cloudflare Worker. No manual steps needed.
+
+> [!TIP]
+> It is recommended to sync your fork when a new release is published in the upstream, so you always have the latest features and security fixes.
 
 ## Contributing
 
