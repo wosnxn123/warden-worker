@@ -65,7 +65,7 @@ There are no immediate plans to implement these features. The primary goal of th
 ## Compatibility
 
 * **Browser Extensions:** Chrome, Firefox, Safari, etc. (Tested 2026.3.0 on Chrome)
-* **Android App:** The official Bitwarden Android app. (Tested 2026.3.1)
+* **Android App:** The official Bitwarden Android app. (Tested 2026.4.0)
 * **iOS App:** The official Bitwarden iOS app. (Tested 2026.4.0)
 
 ## Demo
