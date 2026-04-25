@@ -220,6 +220,30 @@ pub async fn update_cipher(
     .run()
     .await?;
 
+    if let Some(attachments2) = &cipher_data_req.attachments2 {
+        for (attachment_id, attachment) in attachments2 {
+            let result = query!(
+                &db,
+                "UPDATE attachments SET file_name = ?1, akey = ?2, updated_at = ?3 WHERE id = ?4 AND cipher_id = ?5",
+                attachment.file_name,
+                attachment.key,
+                now,
+                attachment_id,
+                id
+            )
+            .map_err(|_| AppError::Database)?
+            .run()
+            .await;
+
+            if let Err(e) = result {
+                log::warn!(
+                    "Failed to update attachment {} for cipher {}: {:?}",
+                    attachment_id, id, e
+                );
+            }
+        }
+    }
+
     attachments::hydrate_cipher_attachments(&db, env.as_ref(), &mut cipher).await?;
     db::touch_user_updated_at(&db, &claims.sub, &cipher.updated_at).await?;
 
