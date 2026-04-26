@@ -9,7 +9,10 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 use worker::Env;
 
-use crate::{auth::Claims, db, error::AppError, models::device::Device, push};
+use crate::{
+    auth::Claims, db, error::AppError, models::auth_request::AuthRequest, models::device::Device,
+    push,
+};
 
 fn required_header(headers: &HeaderMap, name: &str) -> Result<String, AppError> {
     headers
@@ -54,9 +57,24 @@ pub async fn get_devices(
 ) -> Result<Json<Value>, AppError> {
     let db = db::get_db(&env)?;
     let devices = Device::list_by_user(&db, &claims.sub).await?;
+    let pending = AuthRequest::list_pending_by_user(&db, &claims.sub).await?;
+
+    let data: Vec<Value> = devices
+        .iter()
+        .map(|device| {
+            let pending_for_device = pending
+                .iter()
+                .find(|ar| ar.request_device_identifier == device.identifier);
+            let mut json = device.to_json();
+            json["devicePendingAuthRequest"] = pending_for_device
+                .map(AuthRequest::to_pending_device_json)
+                .unwrap_or(Value::Null);
+            json
+        })
+        .collect();
 
     Ok(Json(json!({
-        "data": devices.into_iter().map(|device| device.to_json()).collect::<Vec<Value>>(),
+        "data": data,
         "continuationToken": null,
         "object": "list"
     })))

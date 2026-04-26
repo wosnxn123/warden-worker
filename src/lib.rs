@@ -6,6 +6,7 @@ use tower_service::Service;
 use worker::*;
 
 mod auth;
+mod client_context;
 mod crypto;
 mod db;
 mod durable;
@@ -75,51 +76,34 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<web_sys::Resp
 /// retention period (default: 30 days, configurable via TRASH_AUTO_DELETE_DAYS env var).
 #[event(scheduled)]
 pub async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) {
-    // Set up logging
     console_error_panic_hook::set_once();
     let _ = console_log::init_with_level(log::Level::Debug);
 
-    log::info!("Scheduled task triggered: purging stale pending attachments");
-    match handlers::purge::purge_stale_pending_attachments(&env).await {
-        Ok(count) => {
-            log::info!(
-                "Pending attachment purge completed: {} record(s) removed",
-                count
-            );
-        }
-        Err(e) => {
-            log::error!("Pending attachment purge failed: {:?}", e);
+    fn log_purge_result(name: &str, result: Result<u32, worker::Error>) {
+        match result {
+            Ok(count) => log::info!("Purge {name} completed: {count} record(s) removed"),
+            Err(e) => log::error!("Purge {name} failed: {e:?}"),
         }
     }
 
-    log::info!("Scheduled task triggered: purging soft-deleted ciphers");
-
-    match handlers::purge::purge_deleted_ciphers(&env).await {
-        Ok(count) => {
-            log::info!("Scheduled purge completed: {} cipher(s) removed", count);
-        }
-        Err(e) => {
-            log::error!("Scheduled purge failed: {:?}", e);
-        }
-    }
-
-    log::info!("Scheduled task triggered: purging stale pending sends");
-    match handlers::purge::purge_stale_pending_sends(&env).await {
-        Ok(count) => {
-            log::info!("Pending send purge completed: {} record(s) removed", count);
-        }
-        Err(e) => {
-            log::error!("Pending send purge failed: {:?}", e);
-        }
-    }
-
-    log::info!("Scheduled task triggered: purging expired sends");
-    match handlers::purge::purge_expired_sends(&env).await {
-        Ok(count) => {
-            log::info!("Expired send purge completed: {} record(s) removed", count);
-        }
-        Err(e) => {
-            log::error!("Expired send purge failed: {:?}", e);
-        }
-    }
+    log_purge_result(
+        "stale pending attachments",
+        handlers::purge::purge_stale_pending_attachments(&env).await,
+    );
+    log_purge_result(
+        "soft-deleted ciphers",
+        handlers::purge::purge_deleted_ciphers(&env).await,
+    );
+    log_purge_result(
+        "stale pending sends",
+        handlers::purge::purge_stale_pending_sends(&env).await,
+    );
+    log_purge_result(
+        "expired sends",
+        handlers::purge::purge_expired_sends(&env).await,
+    );
+    log_purge_result(
+        "expired auth requests",
+        handlers::purge::purge_expired_auth_requests(&env).await,
+    );
 }

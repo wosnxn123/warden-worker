@@ -1,5 +1,5 @@
-use axum::{extract::State, Form, Json};
-use chrono::{Duration, Utc};
+use axum::{extract::State, http::HeaderMap, Form, Json};
+use chrono::{DateTime, Duration, Utc};
 use constant_time_eq::constant_time_eq;
 use jwt_compact::AlgorithmExt;
 use jwt_compact::{alg::Hs256Key, Claims as JwtClaims, Header, UntrustedToken};
@@ -10,6 +10,7 @@ use worker::{query, Env};
 
 use crate::{
     auth::{jwt_time_options, Claims},
+    client_context::{parse_required_device_type, request_ip_from_headers},
     crypto::{ct_eq, generate_salt, hash_password_for_storage, validate_totp},
     db,
     error::AppError,
@@ -18,6 +19,7 @@ use crate::{
         twofactor::{is_twofactor_enabled, list_user_twofactors},
     },
     models::{
+        auth_request::{AuthRequest, AUTH_REQUEST_EXPIRY_MINUTES},
         device::{Device, DeviceType},
         twofactor::{TwoFactor, TwoFactorType},
         user::User,
@@ -56,11 +58,13 @@ where
 pub struct TokenRequest {
     grant_type: String,
     username: Option<String>,
-    password: Option<String>, // This is the masterPasswordHash
+    password: Option<String>, // masterPasswordHash or auth request access code
     refresh_token: Option<String>,
     #[serde(rename = "client_id", alias = "clientId")]
     client_id: Option<String>,
     scope: Option<String>,
+    #[serde(rename = "authrequest", alias = "authRequest")]
+    auth_request: Option<String>,
     // 2FA fields
     #[serde(rename = "twoFactorToken")]
     two_factor_token: Option<String>,
@@ -90,6 +94,14 @@ struct DeviceAuthRequest {
     identifier: String,
     name: String,
     r#type: i32,
+}
+
+#[derive(Debug)]
+struct PasswordGrantAuthContext {
+    user: User,
+    device_request: DeviceAuthRequest,
+    password_hash: Option<String>,
+    needs_migration: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -203,25 +215,69 @@ fn parse_password_device_request(payload: &TokenRequest) -> Result<DeviceAuthReq
         client_id: required_field(payload.client_id.as_deref(), "client_id")?,
         identifier: required_field(payload.device_identifier.as_deref(), "device_identifier")?,
         name: required_field(payload.device_name.as_deref(), "device_name")?,
-        r#type: DeviceType::from_str(&required_field(
-            payload.device_type.as_deref(),
-            "device_type",
-        )?)
-        .as_i32(),
+        r#type: parse_required_device_type(payload.device_type.as_deref(), "device_type")?,
     })
 }
 
-async fn load_user_by_email(db: &worker::D1Database, email: &str) -> Result<User, AppError> {
-    let user_value: Option<Value> = db
-        .prepare("SELECT * FROM users WHERE email = ?1")
-        .bind(&[email.to_lowercase().into()])?
-        .first(None)
-        .await
-        .map_err(|_| AppError::Database)?;
+async fn authenticate_password_grant(
+    db: &worker::D1Database,
+    headers: &HeaderMap,
+    payload: &TokenRequest,
+    username: &str,
+) -> Result<PasswordGrantAuthContext, AppError> {
+    let password_hash = required_field(payload.password.as_deref(), "password")?;
+    let device_request = parse_password_device_request(payload)?;
+    let user = User::find_by_email(db, &username.to_lowercase())
+        .await?
+        .ok_or_else(|| AppError::Unauthorized("Invalid credentials".to_string()))?;
 
-    let user_value =
-        user_value.ok_or_else(|| AppError::Unauthorized("Invalid credentials".to_string()))?;
-    serde_json::from_value(user_value).map_err(|_| AppError::Internal)
+    // Bitwarden "login with device" flow:
+    // When `authrequest` is present, clients send the auth-request access code in the `password`
+    // field. In that case we do NOT verify the user's master password (or run KDF migration);
+    // we only validate the auth request (approval, expiry, IP/device match, access code).
+    if let Some(auth_request_id) = optional_field(payload.auth_request.as_deref()) {
+        let auth_request = AuthRequest::find_by_id_and_user(db, &auth_request_id, &user.id)
+            .await?
+            .ok_or_else(|| {
+                AppError::BadRequest("Auth request not found. Try again.".to_string())
+            })?;
+        let request_expired = Utc::now()
+            >= DateTime::parse_from_rfc3339(&auth_request.creation_date)
+                .map(|value| value.with_timezone(&Utc))
+                .map_err(|_| AppError::Internal)?
+                + Duration::minutes(AUTH_REQUEST_EXPIRY_MINUTES);
+
+        if !auth_request.is_approved()
+            || request_expired
+            || auth_request.request_ip != request_ip_from_headers(headers)
+            || auth_request.request_device_identifier != device_request.identifier
+            || auth_request.device_type != device_request.r#type
+            || !auth_request.check_access_code(&password_hash)
+        {
+            return Err(AppError::BadRequest(
+                "Username or access code is incorrect. Try again".to_string(),
+            ));
+        }
+
+        return Ok(PasswordGrantAuthContext {
+            user,
+            device_request,
+            password_hash: None,
+            needs_migration: false,
+        });
+    }
+
+    let verification = user.verify_master_password(&password_hash).await?;
+    if !verification.is_valid() {
+        return Err(AppError::Unauthorized("Invalid credentials".to_string()));
+    }
+
+    Ok(PasswordGrantAuthContext {
+        user,
+        device_request,
+        password_hash: Some(password_hash),
+        needs_migration: verification.needs_migration(),
+    })
 }
 
 async fn load_user_by_id(db: &worker::D1Database, user_id: &str) -> Result<User, AppError> {
@@ -448,6 +504,7 @@ fn generate_tokens_and_response(
 #[worker::send]
 pub async fn token(
     State(env): State<Arc<Env>>,
+    headers: HeaderMap,
     Form(payload): Form<TokenRequest>,
 ) -> Result<Json<TokenResponse>, AppError> {
     let db = db::get_db(&env)?;
@@ -455,8 +512,6 @@ pub async fn token(
     match payload.grant_type.as_str() {
         "password" => {
             let username = required_field(payload.username.as_deref(), "username")?;
-            let password_hash = required_field(payload.password.as_deref(), "password")?;
-            let device_request = parse_password_device_request(&payload)?;
 
             // Check rate limit using email as key to prevent brute force attacks.
             if let Ok(rate_limiter) = env.rate_limiter("LOGIN_RATE_LIMITER") {
@@ -470,11 +525,12 @@ pub async fn token(
                 }
             }
 
-            let user = load_user_by_email(&db, &username).await?;
-            let verification = user.verify_master_password(&password_hash).await?;
-            if !verification.is_valid() {
-                return Err(AppError::Unauthorized("Invalid credentials".to_string()));
-            }
+            let PasswordGrantAuthContext {
+                user,
+                device_request,
+                password_hash,
+                needs_migration,
+            } = authenticate_password_grant(&db, &headers, &payload, &username).await?;
 
             let mut device = Device::get_or_create(
                 &db,
@@ -579,14 +635,18 @@ pub async fn token(
                 }
             }
 
-            let user = maybe_upgrade_password_hash(
-                &db,
-                env.as_ref(),
-                user,
-                &password_hash,
-                verification.needs_migration(),
-            )
-            .await?;
+            let user = if let Some(password_hash) = password_hash {
+                maybe_upgrade_password_hash(
+                    &db,
+                    env.as_ref(),
+                    user,
+                    &password_hash,
+                    needs_migration,
+                )
+                .await?
+            } else {
+                user
+            };
             let mut two_factor_remember_token = None;
             if should_issue_remember {
                 let remember_token = generate_remember_token(env.as_ref(), &user, &device)?;

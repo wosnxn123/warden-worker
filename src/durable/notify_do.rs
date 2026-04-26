@@ -21,6 +21,7 @@ pub struct NotifyDo {
 #[derive(Debug, Default, Deserialize)]
 struct HubQuery {
     access_token: Option<String>,
+    #[serde(alias = "Token")]
     token: Option<String>,
 }
 
@@ -151,15 +152,6 @@ impl NotifyDo {
         let Some(token) = query.token.filter(|value| !value.is_empty()) else {
             return Response::error("Missing token", 400);
         };
-
-        if self
-            .env
-            .var("ANONYMOUS_HUB_ENABLED")
-            .ok()
-            .is_none_or(|value| value.to_string() != "true")
-        {
-            return Response::error("Anonymous hub is not enabled", 403);
-        }
 
         let pair = WebSocketPair::new()?;
         let attachment = ConnectionAttachment::anonymous(token.clone(), db::now_string());

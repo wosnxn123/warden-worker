@@ -8,6 +8,7 @@ use crate::db::now_string;
 use crate::handlers::attachments::{
     attachments_enabled, delete_storage_objects, list_attachment_keys_for_soft_deleted_before,
 };
+use crate::models::auth_request::AuthRequest;
 use crate::models::send::SendDB;
 use crate::notifications::{self, UpdateType};
 use chrono::{Duration, Utc};
@@ -18,6 +19,8 @@ use worker::{query, D1Database, Env};
 const DEFAULT_PURGE_DAYS: i64 = 30;
 /// Retain pending attachments for at most this many days before cleanup
 const PENDING_RETENTION_DAYS: i64 = 1;
+/// Retain auth requests for at most this many minutes before cleanup
+const AUTH_REQUEST_RETENTION_MINUTES: i64 = 15;
 
 /// Get the purge threshold days from environment variable or use default
 fn get_purge_days(env: &Env) -> i64 {
@@ -215,6 +218,29 @@ pub async fn purge_expired_sends(env: &Env) -> Result<u32, worker::Error> {
     }
 
     log::info!("Purged {} expired send(s)", count);
+    Ok(count)
+}
+
+pub async fn purge_expired_auth_requests(env: &Env) -> Result<u32, worker::Error> {
+    let db: D1Database = env.d1("vault1")?;
+    let cutoff = (Utc::now() - Duration::minutes(AUTH_REQUEST_RETENTION_MINUTES))
+        .format("%Y-%m-%dT%H:%M:%S%.3fZ")
+        .to_string();
+
+    let count = AuthRequest::delete_created_before(&db, &cutoff)
+        .await
+        .map_err(|e| worker::Error::RustError(e.to_string()))?;
+
+    if count > 0 {
+        log::info!(
+            "Purged {} auth request(s) older than {} minute(s)",
+            count,
+            AUTH_REQUEST_RETENTION_MINUTES
+        );
+    } else {
+        log::info!("No expired auth requests to purge");
+    }
+
     Ok(count)
 }
 

@@ -141,13 +141,18 @@ export default {
     // This keeps the main Worker on a low-CPU path while allowing heavy work to complete.
     if (env.HEAVY_DO) {
       // Token endpoint:
-      // - password grant is CPU-heavy (password verification) => offload
+      // - plain password grant is CPU-heavy (password verification / KDF migration) => offload
+      // - authrequest password grant skips master-password verification => keep in Worker/WASM
       // - refresh_token grant is lightweight (JWT HS256 verify) => keep in Worker/WASM
       if (url.pathname === "/identity/connect/token" && method === "POST") {
         const body = await request.clone().text();
         const params = new URLSearchParams(body);
         const grantType = params.get("grant_type");
-        if (grantType !== "refresh_token") {
+        const authRequest =
+          params.get("authrequest") ||
+          params.get("authRequest");
+
+        if (grantType === "password" && !authRequest) {
           const shardKey = normalizeUsername(params.get("username"));
           const name = shardKey ? `user:${shardKey}` : "user:default";
           const id = env.HEAVY_DO.idFromName(name);

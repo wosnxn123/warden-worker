@@ -238,7 +238,9 @@ pub async fn update_cipher(
             if let Err(e) = result {
                 log::warn!(
                     "Failed to update attachment {} for cipher {}: {:?}",
-                    attachment_id, id, e
+                    attachment_id,
+                    id,
+                    e
                 );
             }
         }

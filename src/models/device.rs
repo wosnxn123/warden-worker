@@ -50,6 +50,8 @@ impl Device {
             "identifier": &self.identifier,
             "creationDate": &self.created_at,
             "isTrusted": false,
+            "encryptedPublicKey": Value::Null,
+            "encryptedUserKey": Value::Null,
             "object": "device"
         })
     }
@@ -314,35 +316,79 @@ pub enum DeviceType {
 }
 
 impl DeviceType {
-    pub fn from_i32(value: i32) -> Self {
+    fn from_known_i32(value: i32) -> Option<Self> {
         match value {
-            0 => Self::Android,
-            1 => Self::Ios,
-            2 => Self::ChromeExtension,
-            3 => Self::FirefoxExtension,
-            4 => Self::OperaExtension,
-            5 => Self::EdgeExtension,
-            6 => Self::WindowsDesktop,
-            7 => Self::MacOsDesktop,
-            8 => Self::LinuxDesktop,
-            9 => Self::ChromeBrowser,
-            10 => Self::FirefoxBrowser,
-            11 => Self::OperaBrowser,
-            12 => Self::EdgeBrowser,
-            13 => Self::IEBrowser,
-            14 => Self::UnknownBrowser,
-            15 => Self::AndroidAmazon,
-            16 => Self::Uwp,
-            17 => Self::SafariBrowser,
-            18 => Self::VivaldiBrowser,
-            19 => Self::VivaldiExtension,
-            20 => Self::SafariExtension,
-            21 => Self::Sdk,
-            22 => Self::Server,
-            23 => Self::WindowsCli,
-            24 => Self::MacOsCli,
-            25 => Self::LinuxCli,
-            _ => Self::UnknownBrowser,
+            0 => Some(Self::Android),
+            1 => Some(Self::Ios),
+            2 => Some(Self::ChromeExtension),
+            3 => Some(Self::FirefoxExtension),
+            4 => Some(Self::OperaExtension),
+            5 => Some(Self::EdgeExtension),
+            6 => Some(Self::WindowsDesktop),
+            7 => Some(Self::MacOsDesktop),
+            8 => Some(Self::LinuxDesktop),
+            9 => Some(Self::ChromeBrowser),
+            10 => Some(Self::FirefoxBrowser),
+            11 => Some(Self::OperaBrowser),
+            12 => Some(Self::EdgeBrowser),
+            13 => Some(Self::IEBrowser),
+            14 => Some(Self::UnknownBrowser),
+            15 => Some(Self::AndroidAmazon),
+            16 => Some(Self::Uwp),
+            17 => Some(Self::SafariBrowser),
+            18 => Some(Self::VivaldiBrowser),
+            19 => Some(Self::VivaldiExtension),
+            20 => Some(Self::SafariExtension),
+            21 => Some(Self::Sdk),
+            22 => Some(Self::Server),
+            23 => Some(Self::WindowsCli),
+            24 => Some(Self::MacOsCli),
+            25 => Some(Self::LinuxCli),
+            _ => None,
+        }
+    }
+
+    pub fn from_i32(value: i32) -> Self {
+        Self::from_known_i32(value).unwrap_or(Self::UnknownBrowser)
+    }
+
+    pub fn parse_strict(raw: &str) -> Option<Self> {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+
+        if let Ok(value) = trimmed.parse::<i32>() {
+            return Self::from_known_i32(value);
+        }
+
+        match trimmed.to_ascii_lowercase().as_str() {
+            "android" => Some(Self::Android),
+            "ios" => Some(Self::Ios),
+            "chrome extension" => Some(Self::ChromeExtension),
+            "firefox extension" => Some(Self::FirefoxExtension),
+            "opera extension" => Some(Self::OperaExtension),
+            "edge extension" => Some(Self::EdgeExtension),
+            "windows" | "windows desktop" => Some(Self::WindowsDesktop),
+            "macos" | "macos desktop" => Some(Self::MacOsDesktop),
+            "linux" | "linux desktop" => Some(Self::LinuxDesktop),
+            "chrome" => Some(Self::ChromeBrowser),
+            "firefox" => Some(Self::FirefoxBrowser),
+            "opera" => Some(Self::OperaBrowser),
+            "edge" => Some(Self::EdgeBrowser),
+            "internet explorer" | "ie" => Some(Self::IEBrowser),
+            "unknown browser" => Some(Self::UnknownBrowser),
+            "uwp" => Some(Self::Uwp),
+            "safari" => Some(Self::SafariBrowser),
+            "vivaldi" => Some(Self::VivaldiBrowser),
+            "vivaldi extension" => Some(Self::VivaldiExtension),
+            "safari extension" => Some(Self::SafariExtension),
+            "sdk" => Some(Self::Sdk),
+            "server" => Some(Self::Server),
+            "windows cli" => Some(Self::WindowsCli),
+            "macos cli" => Some(Self::MacOsCli),
+            "linux cli" => Some(Self::LinuxCli),
+            _ => None,
         }
     }
 
@@ -352,43 +398,7 @@ impl DeviceType {
     /// string `"iOS"`, while most other clients send a number.
     /// We accept both forms and fall back to `Unknown Browser` (`14`) for anything invalid.
     pub fn from_str(raw: &str) -> Self {
-        let trimmed = raw.trim();
-        if trimmed.is_empty() {
-            return Self::UnknownBrowser;
-        }
-
-        if let Ok(value) = trimmed.parse::<i32>() {
-            return Self::from_i32(value);
-        }
-
-        match trimmed.to_ascii_lowercase().as_str() {
-            "android" => Self::Android,
-            "ios" => Self::Ios,
-            "chrome extension" => Self::ChromeExtension,
-            "firefox extension" => Self::FirefoxExtension,
-            "opera extension" => Self::OperaExtension,
-            "edge extension" => Self::EdgeExtension,
-            "windows" | "windows desktop" => Self::WindowsDesktop,
-            "macos" | "macos desktop" => Self::MacOsDesktop,
-            "linux" | "linux desktop" => Self::LinuxDesktop,
-            "chrome" => Self::ChromeBrowser,
-            "firefox" => Self::FirefoxBrowser,
-            "opera" => Self::OperaBrowser,
-            "edge" => Self::EdgeBrowser,
-            "internet explorer" | "ie" => Self::IEBrowser,
-            "unknown browser" => Self::UnknownBrowser,
-            "uwp" => Self::Uwp,
-            "safari" => Self::SafariBrowser,
-            "vivaldi" => Self::VivaldiBrowser,
-            "vivaldi extension" => Self::VivaldiExtension,
-            "safari extension" => Self::SafariExtension,
-            "sdk" => Self::Sdk,
-            "server" => Self::Server,
-            "windows cli" => Self::WindowsCli,
-            "macos cli" => Self::MacOsCli,
-            "linux cli" => Self::LinuxCli,
-            _ => Self::UnknownBrowser,
-        }
+        Self::parse_strict(raw).unwrap_or(Self::UnknownBrowser)
     }
 
     pub fn display_name(self) -> &'static str {

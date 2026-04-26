@@ -1,4 +1,5 @@
 pub mod attachment;
+pub mod auth_request;
 pub mod cipher;
 pub mod device;
 pub mod folder;
