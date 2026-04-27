@@ -18,7 +18,5 @@ CREATE TABLE IF NOT EXISTS auth_requests (
 
 CREATE INDEX IF NOT EXISTS idx_auth_requests_user_id
     ON auth_requests(user_id);
-CREATE INDEX IF NOT EXISTS idx_auth_requests_user_device
-    ON auth_requests(user_id, request_device_identifier);
 CREATE INDEX IF NOT EXISTS idx_auth_requests_creation_date
     ON auth_requests(creation_date);
