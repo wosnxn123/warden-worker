@@ -3,7 +3,7 @@ use std::panic::AssertUnwindSafe;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::future_to_promise;
 
-#[wasm_bindgen(module = "cloudflare:workers")]
+#[wasm_bindgen(raw_module = "cloudflare:workers")]
 extern "C" {
     #[wasm_bindgen(js_name = waitUntil)]
     fn wait_until_js(promise: &js_sys::Promise);
