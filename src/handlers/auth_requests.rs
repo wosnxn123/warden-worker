@@ -77,15 +77,16 @@ pub async fn post_auth_request(
     );
     auth_request.insert(&db).await?;
 
-    notifications::publish_auth_request(
-        &env,
-        &user.id,
-        &auth_request.id,
-        Some(&auth_request.request_device_identifier),
-    )
-    .await;
+    let response = auth_request.to_json(&base_url);
 
-    Ok(Json(auth_request.to_json(&base_url)))
+    notifications::publish_auth_request(
+        (*env).clone(),
+        user.id,
+        auth_request.id,
+        Some(auth_request.request_device_identifier),
+    );
+
+    Ok(Json(response))
 }
 
 /// GET /api/auth-requests
@@ -164,19 +165,17 @@ pub async fn put_auth_request(
         auth_request.response_device_id = Some(payload.device_identifier);
         auth_request.update(&db).await?;
 
-        futures_util::join!(
-            notifications::publish_anonymous_update(
-                &env,
-                &auth_request.id,
-                &auth_request.user_id,
-                &auth_request.id,
-            ),
-            notifications::publish_auth_response(
-                &env,
-                &auth_request.user_id,
-                &auth_request.id,
-                Some(&claims.device),
-            ),
+        notifications::publish_anonymous_update(
+            (*env).clone(),
+            auth_request.id.clone(),
+            auth_request.user_id.clone(),
+            auth_request.id.clone(),
+        );
+        notifications::publish_auth_response(
+            (*env).clone(),
+            auth_request.user_id.clone(),
+            auth_request.id.clone(),
+            Some(claims.device),
         );
     } else {
         auth_request.delete(&db).await?;

@@ -180,13 +180,12 @@ pub async fn import_data(
     touch_user_updated_at(&db, &claims.sub, &now).await?;
 
     notifications::publish_user_update(
-        env.as_ref(),
-        &claims.sub,
+        (*env).clone(),
+        claims.sub,
         UpdateType::SyncVault,
-        &now,
-        Some(&claims.device),
-    )
-    .await;
+        now,
+        Some(claims.device),
+    );
 
     Ok(Json(()))
 }

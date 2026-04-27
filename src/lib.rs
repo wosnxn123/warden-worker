@@ -6,6 +6,7 @@ use tower_service::Service;
 use worker::*;
 
 mod auth;
+mod background;
 mod client_context;
 mod crypto;
 mod db;

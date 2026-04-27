@@ -189,13 +189,12 @@ pub async fn post_domains(
     .map_err(|_| AppError::Database)?;
 
     notifications::publish_user_update(
-        env.as_ref(),
-        &claims.sub,
+        (*env).clone(),
+        claims.sub,
         UpdateType::SyncSettings,
-        &now,
-        Some(&claims.device),
-    )
-    .await;
+        now,
+        Some(claims.device),
+    );
 
     Ok(Json(json!({})))
 }

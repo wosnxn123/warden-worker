@@ -291,17 +291,17 @@ pub async fn create_text_send(
     send.insert(&db).await?;
     db::touch_user_updated_at(&db, &claims.sub, &send.updated_at).await?;
 
+    let response = send.to_json();
     notifications::publish_send_update(
-        env.as_ref(),
-        &claims.sub,
+        (*env).clone(),
+        claims.sub,
         UpdateType::SyncSendCreate,
-        &send.id,
-        &send.updated_at,
-        Some(&claims.device),
-    )
-    .await;
+        send.id,
+        send.updated_at,
+        Some(claims.device),
+    );
 
-    Ok(Json(send.to_json()))
+    Ok(Json(response))
 }
 
 // ── POST /api/sends/file/v2 (preferred file send creation) ──────────
@@ -480,17 +480,17 @@ pub async fn create_file_send_legacy(
     send.insert(&db).await?;
     db::touch_user_updated_at(&db, &claims.sub, &send.updated_at).await?;
 
+    let response = send.to_json();
     notifications::publish_send_update(
-        env.as_ref(),
-        &claims.sub,
+        (*env).clone(),
+        claims.sub,
         UpdateType::SyncSendCreate,
-        &send.id,
-        &send.updated_at,
-        Some(&claims.device),
-    )
-    .await;
+        send.id,
+        send.updated_at,
+        Some(claims.device),
+    );
 
-    Ok(Json(send.to_json()))
+    Ok(Json(response))
 }
 
 // ── POST /api/sends/{send_id}/file/{file_id} (Direct upload compat) ─
@@ -559,14 +559,13 @@ pub async fn upload_file_send_direct(
     db::touch_user_updated_at(&db, &claims.sub, &pending.updated_at).await?;
 
     notifications::publish_send_update(
-        env.as_ref(),
-        &claims.sub,
+        (*env).clone(),
+        claims.sub,
         UpdateType::SyncSendCreate,
-        &pending.id,
-        &pending.updated_at,
-        Some(&claims.device),
-    )
-    .await;
+        pending.id,
+        pending.updated_at,
+        Some(claims.device),
+    );
 
     Ok(())
 }
@@ -612,17 +611,17 @@ pub async fn update_send(
     send.update(&db).await?;
     db::touch_user_updated_at(&db, &claims.sub, &send.updated_at).await?;
 
+    let response = send.to_json();
     notifications::publish_send_update(
-        env.as_ref(),
-        &claims.sub,
+        (*env).clone(),
+        claims.sub,
         UpdateType::SyncSendUpdate,
-        &send.id,
-        &send.updated_at,
-        Some(&claims.device),
-    )
-    .await;
+        send.id,
+        send.updated_at,
+        Some(claims.device),
+    );
 
-    Ok(Json(send.to_json()))
+    Ok(Json(response))
 }
 
 // ── DELETE /api/sends/{send_id} ─────────────────────────────────────
@@ -647,14 +646,13 @@ pub async fn delete_send(
     let now = db::now_string();
     db::touch_user_updated_at(&db, &claims.sub, &now).await?;
     notifications::publish_send_update(
-        env.as_ref(),
-        &claims.sub,
+        (*env).clone(),
+        claims.sub,
         UpdateType::SyncSendDelete,
-        &send_id,
-        &now,
-        Some(&claims.device),
-    )
-    .await;
+        send_id,
+        now,
+        Some(claims.device),
+    );
 
     Ok(())
 }
@@ -676,17 +674,17 @@ pub async fn remove_password(
     send.update(&db).await?;
     db::touch_user_updated_at(&db, &claims.sub, &send.updated_at).await?;
 
+    let response = send.to_json();
     notifications::publish_send_update(
-        env.as_ref(),
-        &claims.sub,
+        (*env).clone(),
+        claims.sub,
         UpdateType::SyncSendUpdate,
-        &send.id,
-        &send.updated_at,
-        Some(&claims.device),
-    )
-    .await;
+        send.id,
+        send.updated_at,
+        Some(claims.device),
+    );
 
-    Ok(Json(send.to_json()))
+    Ok(Json(response))
 }
 
 // ── POST /api/sends/access/{access_id} (anonymous access) ──────────
@@ -731,18 +729,18 @@ pub async fn access_send(
 
     db::touch_user_updated_at(&db, &send.user_id, &send.updated_at).await?;
 
-    notifications::publish_send_update(
-        env.as_ref(),
-        &send.user_id,
-        UpdateType::SyncSendUpdate,
-        &send.id,
-        &send.updated_at,
-        None,
-    )
-    .await;
-
     let creator_id = resolve_creator_identifier(&db, &send).await;
-    Ok(Json(send.to_access_json(creator_id.as_deref())))
+    let response = send.to_access_json(creator_id.as_deref());
+    notifications::publish_send_update(
+        (*env).clone(),
+        send.user_id,
+        UpdateType::SyncSendUpdate,
+        send.id,
+        send.updated_at,
+        None,
+    );
+
+    Ok(Json(response))
 }
 
 // ── POST /api/sends/{send_id}/access/file/{file_id} (anonymous file) ─
@@ -779,14 +777,13 @@ pub async fn access_file_send(
     db::touch_user_updated_at(&db, &send.user_id, &send.updated_at).await?;
 
     notifications::publish_send_update(
-        env.as_ref(),
-        &send.user_id,
+        (*env).clone(),
+        send.user_id,
         UpdateType::SyncSendUpdate,
-        &send.id,
-        &send.updated_at,
+        send.id,
+        send.updated_at,
         None,
-    )
-    .await;
+    );
 
     let token = build_download_token(&env, &send_id, &file_id)?;
     let url = format!("{base_url}/api/sends/{send_id}/{file_id}?t={token}");

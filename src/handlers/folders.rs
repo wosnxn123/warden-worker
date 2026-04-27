@@ -93,22 +93,21 @@ pub async fn create_folder(
 
     touch_user_updated_at(&db, &claims.sub, &folder.updated_at).await?;
 
-    notifications::publish_folder_update(
-        env.as_ref(),
-        &claims.sub,
-        UpdateType::SyncFolderCreate,
-        &folder.id,
-        &folder.updated_at,
-        Some(&claims.device),
-    )
-    .await;
-
     let response = FolderResponse {
-        id: folder.id,
+        id: folder.id.clone(),
         name: folder.name,
-        revision_date: folder.updated_at,
+        revision_date: folder.updated_at.clone(),
         object: "folder".to_string(),
     };
+
+    notifications::publish_folder_update(
+        (*env).clone(),
+        claims.sub,
+        UpdateType::SyncFolderCreate,
+        folder.id,
+        folder.updated_at,
+        Some(claims.device),
+    );
 
     Ok(Json(response))
 }
@@ -135,14 +134,13 @@ pub async fn delete_folder(
     touch_user_updated_at(&db, &claims.sub, &now).await?;
 
     notifications::publish_folder_update(
-        env.as_ref(),
-        &claims.sub,
+        (*env).clone(),
+        claims.sub,
         UpdateType::SyncFolderDelete,
-        &id,
-        &now,
-        Some(&claims.device),
-    )
-    .await;
+        id,
+        now,
+        Some(claims.device),
+    );
 
     Ok(Json(()))
 }
@@ -189,22 +187,21 @@ pub async fn update_folder(
 
     touch_user_updated_at(&db, &claims.sub, &folder.updated_at).await?;
 
-    notifications::publish_folder_update(
-        env.as_ref(),
-        &claims.sub,
-        UpdateType::SyncFolderUpdate,
-        &folder.id,
-        &folder.updated_at,
-        Some(&claims.device),
-    )
-    .await;
-
     let response = FolderResponse {
-        id: folder.id,
+        id: folder.id.clone(),
         name: folder.name,
-        revision_date: folder.updated_at,
+        revision_date: folder.updated_at.clone(),
         object: "folder".to_string(),
     };
+
+    notifications::publish_folder_update(
+        (*env).clone(),
+        claims.sub,
+        UpdateType::SyncFolderUpdate,
+        folder.id,
+        folder.updated_at,
+        Some(claims.device),
+    );
 
     Ok(Json(response))
 }

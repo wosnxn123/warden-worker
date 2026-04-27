@@ -155,14 +155,13 @@ async fn handle_attachment_upload(
     touch_user_updated_at(&db, user_id, &now).await?;
 
     notifications::publish_cipher_update(
-        env,
-        user_id,
+        env.clone(),
+        user_id.to_string(),
         UpdateType::SyncCipherUpdate,
-        cipher_id,
-        &now,
-        context_id,
-    )
-    .await;
+        cipher_id.to_string(),
+        now,
+        context_id.map(|s| s.to_string()),
+    );
 
     ok_empty(201)
 }
@@ -264,14 +263,13 @@ async fn handle_send_upload(
     db::touch_user_updated_at(&db, user_id, now).await?;
 
     notifications::publish_send_update(
-        env,
-        user_id,
+        env.clone(),
+        user_id.to_string(),
         UpdateType::SyncSendCreate,
-        send_id,
-        now,
-        Some(&claims.device),
-    )
-    .await;
+        send_id.to_string(),
+        now.to_string(),
+        Some(claims.device),
+    );
 
     ok_empty(201)
 }

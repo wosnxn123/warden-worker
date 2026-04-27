@@ -238,196 +238,211 @@ async fn send_ws_to_do(env: &Env, selector: &PublishSelector, ws_bytes: &[u8]) {
 
 // ── Publish helpers (called by handlers) ────────────────────────────
 
-pub async fn publish_user_update(
-    env: &Env,
-    user_id: &str,
+pub fn publish_user_update(
+    env: Env,
+    user_id: String,
     update_type: UpdateType,
-    date: &str,
-    context_id: Option<&str>,
+    date: String,
+    context_id: Option<String>,
 ) {
-    let ws_bytes = create_update(
-        vec![
-            ("UserId".into(), user_id.into()),
-            ("Date".into(), serialize_date(parse_timestamp(date))),
-        ],
-        update_type as i32,
-        context_id,
-    );
-    let selector = PublishSelector::user(user_id);
-    futures_util::join!(
-        send_ws_to_do(env, &selector, &ws_bytes),
-        push::push_user_update(env, user_id, update_type as i32, date, context_id),
-    );
-}
-
-pub async fn publish_user_logout(env: &Env, user_id: &str, date: &str, context_id: Option<&str>) {
-    publish_user_update(env, user_id, UpdateType::LogOut, date, context_id).await
-}
-
-pub async fn publish_folder_update(
-    env: &Env,
-    user_id: &str,
-    update_type: UpdateType,
-    folder_id: &str,
-    revision_date: &str,
-    context_id: Option<&str>,
-) {
-    let ws_bytes = create_update(
-        vec![
-            ("Id".into(), folder_id.into()),
-            ("UserId".into(), user_id.into()),
-            (
-                "RevisionDate".into(),
-                serialize_date(parse_timestamp(revision_date)),
-            ),
-        ],
-        update_type as i32,
-        context_id,
-    );
-    let selector = PublishSelector::user(user_id);
-    futures_util::join!(
-        send_ws_to_do(env, &selector, &ws_bytes),
-        push::push_folder_update(
-            env,
-            user_id,
+    crate::background::spawn_background(async move {
+        let ws_bytes = create_update(
+            vec![
+                ("UserId".into(), user_id.as_str().into()),
+                ("Date".into(), serialize_date(parse_timestamp(&date))),
+            ],
             update_type as i32,
-            folder_id,
-            revision_date,
-            context_id,
-        ),
-    );
-}
-
-pub async fn publish_cipher_update(
-    env: &Env,
-    user_id: &str,
-    update_type: UpdateType,
-    cipher_id: &str,
-    revision_date: &str,
-    context_id: Option<&str>,
-) {
-    let ws_bytes = create_update(
-        vec![
-            ("Id".into(), cipher_id.into()),
-            // Org feature is not supported,
-            // so we simply set all related parameters to null.
-            ("UserId".into(), user_id.into()),
-            ("OrganizationId".into(), Value::Nil),
-            ("CollectionIds".into(), Value::Nil),
-            (
-                "RevisionDate".into(),
-                serialize_date(parse_timestamp(revision_date)),
+            context_id.as_deref(),
+        );
+        let selector = PublishSelector::user(&user_id);
+        futures_util::join!(
+            send_ws_to_do(&env, &selector, &ws_bytes),
+            push::push_user_update(
+                &env,
+                &user_id,
+                update_type as i32,
+                &date,
+                context_id.as_deref()
             ),
-        ],
-        update_type as i32,
-        context_id,
-    );
-    let selector = PublishSelector::user(user_id);
-    futures_util::join!(
-        send_ws_to_do(env, &selector, &ws_bytes),
-        push::push_cipher_update(
-            env,
-            user_id,
-            update_type as i32,
-            cipher_id,
-            revision_date,
-            context_id,
-        ),
-    );
+        );
+    });
 }
 
-pub async fn publish_send_update(
-    env: &Env,
-    user_id: &str,
+pub fn publish_user_logout(env: Env, user_id: String, date: String, context_id: Option<String>) {
+    publish_user_update(env, user_id, UpdateType::LogOut, date, context_id)
+}
+
+pub fn publish_folder_update(
+    env: Env,
+    user_id: String,
     update_type: UpdateType,
-    send_id: &str,
-    revision_date: &str,
-    context_id: Option<&str>,
+    folder_id: String,
+    revision_date: String,
+    context_id: Option<String>,
 ) {
-    let ws_bytes = create_update(
-        vec![
-            ("Id".into(), send_id.into()),
-            ("UserId".into(), user_id.into()),
-            (
-                "RevisionDate".into(),
-                serialize_date(parse_timestamp(revision_date)),
-            ),
-        ],
-        update_type as i32,
-        context_id,
-    );
-    let selector = PublishSelector::user(user_id);
-    futures_util::join!(
-        send_ws_to_do(env, &selector, &ws_bytes),
-        push::push_send_update(
-            env,
-            user_id,
+    crate::background::spawn_background(async move {
+        let ws_bytes = create_update(
+            vec![
+                ("Id".into(), folder_id.as_str().into()),
+                ("UserId".into(), user_id.as_str().into()),
+                (
+                    "RevisionDate".into(),
+                    serialize_date(parse_timestamp(&revision_date)),
+                ),
+            ],
             update_type as i32,
-            send_id,
-            revision_date,
-            context_id,
-        ),
-    );
+            context_id.as_deref(),
+        );
+        let selector = PublishSelector::user(&user_id);
+        futures_util::join!(
+            send_ws_to_do(&env, &selector, &ws_bytes),
+            push::push_folder_update(
+                &env,
+                &user_id,
+                update_type as i32,
+                &folder_id,
+                &revision_date,
+                context_id.as_deref(),
+            ),
+        );
+    });
 }
 
-pub async fn publish_auth_request(
-    env: &Env,
-    user_id: &str,
-    auth_request_id: &str,
-    context_id: Option<&str>,
+pub fn publish_cipher_update(
+    env: Env,
+    user_id: String,
+    update_type: UpdateType,
+    cipher_id: String,
+    revision_date: String,
+    context_id: Option<String>,
 ) {
-    let ws_bytes = create_update(
-        vec![
-            ("Id".into(), auth_request_id.into()),
-            ("UserId".into(), user_id.into()),
-        ],
-        UpdateType::AuthRequest as i32,
-        context_id,
-    );
-    let selector = PublishSelector::user(user_id);
-    futures_util::join!(
-        send_ws_to_do(env, &selector, &ws_bytes),
-        push::push_auth_request(env, user_id, auth_request_id, context_id),
-    );
+    crate::background::spawn_background(async move {
+        let ws_bytes = create_update(
+            vec![
+                ("Id".into(), cipher_id.as_str().into()),
+                // Org feature is not supported,
+                // so we simply set all related parameters to null.
+                ("UserId".into(), user_id.as_str().into()),
+                ("OrganizationId".into(), Value::Nil),
+                ("CollectionIds".into(), Value::Nil),
+                (
+                    "RevisionDate".into(),
+                    serialize_date(parse_timestamp(&revision_date)),
+                ),
+            ],
+            update_type as i32,
+            context_id.as_deref(),
+        );
+        let selector = PublishSelector::user(&user_id);
+        futures_util::join!(
+            send_ws_to_do(&env, &selector, &ws_bytes),
+            push::push_cipher_update(
+                &env,
+                &user_id,
+                update_type as i32,
+                &cipher_id,
+                &revision_date,
+                context_id.as_deref(),
+            ),
+        );
+    });
 }
 
-pub async fn publish_auth_response(
-    env: &Env,
-    user_id: &str,
-    auth_request_id: &str,
-    context_id: Option<&str>,
+pub fn publish_send_update(
+    env: Env,
+    user_id: String,
+    update_type: UpdateType,
+    send_id: String,
+    revision_date: String,
+    context_id: Option<String>,
 ) {
-    let ws_bytes = create_update(
-        vec![
-            ("Id".into(), auth_request_id.into()),
-            ("UserId".into(), user_id.into()),
-        ],
-        UpdateType::AuthRequestResponse as i32,
-        context_id,
-    );
-    let selector = PublishSelector::user(user_id);
-    futures_util::join!(
-        send_ws_to_do(env, &selector, &ws_bytes),
-        push::push_auth_response(env, user_id, auth_request_id, context_id),
-    );
+    crate::background::spawn_background(async move {
+        let ws_bytes = create_update(
+            vec![
+                ("Id".into(), send_id.as_str().into()),
+                ("UserId".into(), user_id.as_str().into()),
+                (
+                    "RevisionDate".into(),
+                    serialize_date(parse_timestamp(&revision_date)),
+                ),
+            ],
+            update_type as i32,
+            context_id.as_deref(),
+        );
+        let selector = PublishSelector::user(&user_id);
+        futures_util::join!(
+            send_ws_to_do(&env, &selector, &ws_bytes),
+            push::push_send_update(
+                &env,
+                &user_id,
+                update_type as i32,
+                &send_id,
+                &revision_date,
+                context_id.as_deref(),
+            ),
+        );
+    });
 }
 
-pub async fn publish_anonymous_update(
-    env: &Env,
-    token: &str,
-    user_id: &str,
-    auth_request_id: &str,
+pub fn publish_auth_request(
+    env: Env,
+    user_id: String,
+    auth_request_id: String,
+    context_id: Option<String>,
 ) {
-    let ws_bytes = create_anonymous_update(
-        vec![
-            ("Id".into(), auth_request_id.into()),
-            ("UserId".into(), user_id.into()),
-        ],
-        UpdateType::AuthRequestResponse as i32,
-        user_id,
-    );
-    let selector = PublishSelector::anonymous(token);
-    send_ws_to_do(env, &selector, &ws_bytes).await;
+    crate::background::spawn_background(async move {
+        let ws_bytes = create_update(
+            vec![
+                ("Id".into(), auth_request_id.as_str().into()),
+                ("UserId".into(), user_id.as_str().into()),
+            ],
+            UpdateType::AuthRequest as i32,
+            context_id.as_deref(),
+        );
+        let selector = PublishSelector::user(&user_id);
+        futures_util::join!(
+            send_ws_to_do(&env, &selector, &ws_bytes),
+            push::push_auth_request(&env, &user_id, &auth_request_id, context_id.as_deref()),
+        );
+    });
+}
+
+pub fn publish_auth_response(
+    env: Env,
+    user_id: String,
+    auth_request_id: String,
+    context_id: Option<String>,
+) {
+    crate::background::spawn_background(async move {
+        let ws_bytes = create_update(
+            vec![
+                ("Id".into(), auth_request_id.as_str().into()),
+                ("UserId".into(), user_id.as_str().into()),
+            ],
+            UpdateType::AuthRequestResponse as i32,
+            context_id.as_deref(),
+        );
+        let selector = PublishSelector::user(&user_id);
+        futures_util::join!(
+            send_ws_to_do(&env, &selector, &ws_bytes),
+            push::push_auth_response(&env, &user_id, &auth_request_id, context_id.as_deref()),
+        );
+    });
+}
+
+pub fn publish_anonymous_update(env: Env, token: String, user_id: String, auth_request_id: String) {
+    crate::background::spawn_background(async move {
+        let ws_bytes = create_anonymous_update(
+            vec![
+                ("Id".into(), auth_request_id.as_str().into()),
+                ("UserId".into(), user_id.as_str().into()),
+            ],
+            UpdateType::AuthRequestResponse as i32,
+            &user_id,
+        );
+        let selector = PublishSelector::anonymous(&token);
+        send_ws_to_do(&env, &selector, &ws_bytes).await;
+    });
 }
 
 // ── MessagePack internals ───────────────────────────────────────────

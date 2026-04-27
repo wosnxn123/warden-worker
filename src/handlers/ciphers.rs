@@ -111,14 +111,13 @@ pub async fn create_cipher(
     db::touch_user_updated_at(&db, &claims.sub, &cipher.updated_at).await?;
 
     notifications::publish_cipher_update(
-        env.as_ref(),
-        &claims.sub,
+        (*env).clone(),
+        claims.sub,
         UpdateType::SyncCipherCreate,
-        &cipher.id,
-        &cipher.updated_at,
-        Some(&claims.device),
-    )
-    .await;
+        cipher.id.clone(),
+        cipher.updated_at.clone(),
+        Some(claims.device),
+    );
 
     Ok(Json(cipher))
 }
@@ -250,14 +249,13 @@ pub async fn update_cipher(
     db::touch_user_updated_at(&db, &claims.sub, &cipher.updated_at).await?;
 
     notifications::publish_cipher_update(
-        env.as_ref(),
-        &claims.sub,
+        (*env).clone(),
+        claims.sub,
         UpdateType::SyncCipherUpdate,
-        &cipher.id,
-        &cipher.updated_at,
-        Some(&claims.device),
-    )
-    .await;
+        cipher.id.clone(),
+        cipher.updated_at.clone(),
+        Some(claims.device),
+    );
 
     Ok(Json(cipher))
 }
@@ -386,14 +384,13 @@ pub async fn soft_delete_cipher(
     db::touch_user_updated_at(&db, &claims.sub, &now).await?;
 
     notifications::publish_cipher_update(
-        env.as_ref(),
-        &claims.sub,
+        (*env).clone(),
+        claims.sub,
         UpdateType::SyncCipherUpdate,
-        &id,
-        &now,
-        Some(&claims.device),
-    )
-    .await;
+        id,
+        now,
+        Some(claims.device),
+    );
 
     Ok(Json(()))
 }
@@ -425,13 +422,12 @@ pub async fn soft_delete_ciphers_bulk(
     db::touch_user_updated_at(&db, &claims.sub, &now).await?;
 
     notifications::publish_user_update(
-        env.as_ref(),
-        &claims.sub,
+        (*env).clone(),
+        claims.sub,
         UpdateType::SyncCiphers,
-        &now,
-        Some(&claims.device),
-    )
-    .await;
+        now,
+        Some(claims.device),
+    );
 
     Ok(Json(()))
 }
@@ -473,14 +469,13 @@ pub async fn hard_delete_cipher(
     db::touch_user_updated_at(&db, &claims.sub, &now).await?;
 
     notifications::publish_cipher_update(
-        env.as_ref(),
-        &claims.sub,
+        (*env).clone(),
+        claims.sub,
         UpdateType::SyncLoginDelete,
-        &id,
-        &now,
-        Some(&claims.device),
-    )
-    .await;
+        id,
+        now,
+        Some(claims.device),
+    );
 
     Ok(Json(()))
 }
@@ -522,13 +517,12 @@ pub async fn hard_delete_ciphers_bulk(
     db::touch_user_updated_at(&db, &claims.sub, &now).await?;
 
     notifications::publish_user_update(
-        env.as_ref(),
-        &claims.sub,
+        (*env).clone(),
+        claims.sub,
         UpdateType::SyncCiphers,
-        &now,
-        Some(&claims.device),
-    )
-    .await;
+        now,
+        Some(claims.device),
+    );
 
     Ok(Json(()))
 }
@@ -564,14 +558,13 @@ pub async fn restore_cipher(
     db::touch_user_updated_at(&db, &claims.sub, &cipher.updated_at).await?;
 
     notifications::publish_cipher_update(
-        env.as_ref(),
-        &claims.sub,
+        (*env).clone(),
+        claims.sub,
         UpdateType::SyncCipherUpdate,
-        &cipher.id,
-        &cipher.updated_at,
-        Some(&claims.device),
-    )
-    .await;
+        cipher.id.clone(),
+        cipher.updated_at.clone(),
+        Some(claims.device),
+    );
 
     Ok(Json(cipher))
 }
@@ -604,19 +597,18 @@ pub async fn restore_ciphers_bulk(
     db::touch_user_updated_at(&db, &claims.sub, &now).await?;
 
     notifications::publish_user_update(
-        env.as_ref(),
-        &claims.sub,
+        (*env).clone(),
+        claims.sub.clone(),
         UpdateType::SyncCiphers,
-        &now,
-        Some(&claims.device),
-    )
-    .await;
+        now,
+        Some(claims.device),
+    );
 
     build_cipher_list_response(
         &db,
         env.as_ref(),
         "WHERE c.user_id = ?1 AND c.id IN (SELECT value FROM json_each(?2, '$.ids'))",
-        &[claims.sub.clone().into(), body.clone().into()],
+        &[claims.sub.into(), body.into()],
         "",
     )
     .await
@@ -655,14 +647,13 @@ pub async fn archive_cipher(
     db::touch_user_updated_at(&db, &claims.sub, &cipher.updated_at).await?;
 
     notifications::publish_cipher_update(
-        env.as_ref(),
-        &claims.sub,
+        (*env).clone(),
+        claims.sub,
         UpdateType::SyncCipherUpdate,
-        &cipher.id,
-        &cipher.updated_at,
-        Some(&claims.device),
-    )
-    .await;
+        cipher.id.clone(),
+        cipher.updated_at.clone(),
+        Some(claims.device),
+    );
 
     Ok(Json(cipher))
 }
@@ -700,14 +691,13 @@ pub async fn unarchive_cipher(
     db::touch_user_updated_at(&db, &claims.sub, &cipher.updated_at).await?;
 
     notifications::publish_cipher_update(
-        env.as_ref(),
-        &claims.sub,
+        (*env).clone(),
+        claims.sub,
         UpdateType::SyncCipherUpdate,
-        &cipher.id,
-        &cipher.updated_at,
-        Some(&claims.device),
-    )
-    .await;
+        cipher.id.clone(),
+        cipher.updated_at.clone(),
+        Some(claims.device),
+    );
 
     Ok(Json(cipher))
 }
@@ -738,19 +728,18 @@ pub async fn archive_ciphers_bulk(
     db::touch_user_updated_at(&db, &claims.sub, &now).await?;
 
     notifications::publish_user_update(
-        env.as_ref(),
-        &claims.sub,
+        (*env).clone(),
+        claims.sub.clone(),
         UpdateType::SyncCiphers,
-        &now,
-        Some(&claims.device),
-    )
-    .await;
+        now,
+        Some(claims.device),
+    );
 
     build_cipher_list_response(
         &db,
         env.as_ref(),
         "WHERE c.user_id = ?1 AND c.id IN (SELECT value FROM json_each(?2, '$.ids'))",
-        &[claims.sub.clone().into(), body.clone().into()],
+        &[claims.sub.into(), body.into()],
         "",
     )
     .await
@@ -782,19 +771,18 @@ pub async fn unarchive_ciphers_bulk(
     db::touch_user_updated_at(&db, &claims.sub, &now).await?;
 
     notifications::publish_user_update(
-        env.as_ref(),
-        &claims.sub,
+        (*env).clone(),
+        claims.sub.clone(),
         UpdateType::SyncCiphers,
-        &now,
-        Some(&claims.device),
-    )
-    .await;
+        now,
+        Some(claims.device),
+    );
 
     build_cipher_list_response(
         &db,
         env.as_ref(),
         "WHERE c.user_id = ?1 AND c.id IN (SELECT value FROM json_each(?2, '$.ids'))",
-        &[claims.sub.clone().into(), body.clone().into()],
+        &[claims.sub.into(), body.into()],
         "",
     )
     .await
@@ -862,14 +850,13 @@ pub async fn create_cipher_simple(
     db::touch_user_updated_at(&db, &claims.sub, &cipher.updated_at).await?;
 
     notifications::publish_cipher_update(
-        env.as_ref(),
-        &claims.sub,
+        (*env).clone(),
+        claims.sub,
         UpdateType::SyncCipherCreate,
-        &cipher.id,
-        &cipher.updated_at,
-        Some(&claims.device),
-    )
-    .await;
+        cipher.id.clone(),
+        cipher.updated_at.clone(),
+        Some(claims.device),
+    );
 
     Ok(Json(cipher))
 }
@@ -923,13 +910,12 @@ pub async fn move_cipher_selected(
     // Update user's revision date
     db::touch_user_updated_at(&db, user_id, &now).await?;
     notifications::publish_user_update(
-        env.as_ref(),
-        user_id,
+        (*env).clone(),
+        claims.sub,
         UpdateType::SyncCiphers,
-        &now,
-        Some(&claims.device),
-    )
-    .await;
+        now,
+        Some(claims.device),
+    );
 
     Ok(Json(()))
 }
@@ -992,13 +978,12 @@ pub async fn purge_vault(
     db::touch_user_updated_at(&db, user_id, &now).await?;
 
     notifications::publish_user_update(
-        env.as_ref(),
-        user_id,
+        (*env).clone(),
+        claims.sub,
         UpdateType::SyncVault,
-        &now,
-        Some(&claims.device),
-    )
-    .await;
+        now,
+        Some(claims.device),
+    );
 
     Ok(Json(()))
 }

@@ -158,8 +158,13 @@ pub async fn purge_deleted_ciphers(env: &Env) -> Result<u32, worker::Error> {
             .run()
             .await?;
 
-            notifications::publish_user_update(env, user_id, UpdateType::SyncVault, &now_str, None)
-                .await;
+            notifications::publish_user_update(
+                env.clone(),
+                user_id.clone(),
+                UpdateType::SyncVault,
+                now_str.clone(),
+                None,
+            );
         }
 
         log::info!(
