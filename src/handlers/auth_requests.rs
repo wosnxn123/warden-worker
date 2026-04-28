@@ -67,7 +67,7 @@ pub async fn post_auth_request(
         return Err(bad_request());
     }
 
-    let auth_request = AuthRequest::new(
+    let mut auth_request = AuthRequest::new(
         user.id.clone(),
         payload.device_identifier,
         request_device_type,
@@ -76,6 +76,8 @@ pub async fn post_auth_request(
         payload.public_key,
     );
     auth_request.insert(&db).await?;
+    // bitwarden/server will map null to false for requestApproved.
+    auth_request.set_approved(false);
 
     let response = auth_request.to_json(&base_url);
 
