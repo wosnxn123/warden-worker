@@ -384,11 +384,12 @@ pub fn publish_send_update(
     });
 }
 
-pub fn publish_auth_request(
+pub fn publish_auth_update(
     env: Env,
     user_id: String,
     auth_request_id: String,
     context_id: Option<String>,
+    update_type: UpdateType,
 ) {
     crate::background::spawn_background(async move {
         let ws_bytes = create_update(
@@ -396,36 +397,19 @@ pub fn publish_auth_request(
                 ("Id".into(), auth_request_id.as_str().into()),
                 ("UserId".into(), user_id.as_str().into()),
             ],
-            UpdateType::AuthRequest as i32,
+            update_type as i32,
             context_id.as_deref(),
         );
         let selector = PublishSelector::user(&user_id);
         futures_util::join!(
             send_ws_to_do(&env, &selector, &ws_bytes),
-            push::push_auth_request(&env, &user_id, &auth_request_id, context_id.as_deref()),
-        );
-    });
-}
-
-pub fn publish_auth_response(
-    env: Env,
-    user_id: String,
-    auth_request_id: String,
-    context_id: Option<String>,
-) {
-    crate::background::spawn_background(async move {
-        let ws_bytes = create_update(
-            vec![
-                ("Id".into(), auth_request_id.as_str().into()),
-                ("UserId".into(), user_id.as_str().into()),
-            ],
-            UpdateType::AuthRequestResponse as i32,
-            context_id.as_deref(),
-        );
-        let selector = PublishSelector::user(&user_id);
-        futures_util::join!(
-            send_ws_to_do(&env, &selector, &ws_bytes),
-            push::push_auth_response(&env, &user_id, &auth_request_id, context_id.as_deref()),
+            push::push_auth_update(
+                &env,
+                &user_id,
+                &auth_request_id,
+                context_id.as_deref(),
+                update_type as i32,
+            ),
         );
     });
 }

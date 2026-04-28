@@ -67,7 +67,7 @@ pub async fn post_auth_request(
         return Err(bad_request());
     }
 
-    let mut auth_request = AuthRequest::new(
+    let auth_request = AuthRequest::new(
         user.id.clone(),
         payload.device_identifier,
         request_device_type,
@@ -76,16 +76,15 @@ pub async fn post_auth_request(
         payload.public_key,
     );
     auth_request.insert(&db).await?;
-    // bitwarden/server will map null to false for requestApproved.
-    auth_request.set_approved(false);
 
     let response = auth_request.to_json(&base_url);
 
-    notifications::publish_auth_request(
+    notifications::publish_auth_update(
         (*env).clone(),
         user.id,
         auth_request.id,
         Some(auth_request.request_device_identifier),
+        notifications::UpdateType::AuthRequest,
     );
 
     Ok(Json(response))
@@ -173,15 +172,15 @@ pub async fn put_auth_request(
             auth_request.user_id.clone(),
             auth_request.id.clone(),
         );
-        notifications::publish_auth_response(
+        notifications::publish_auth_update(
             (*env).clone(),
             auth_request.user_id.clone(),
             auth_request.id.clone(),
             Some(claims.device),
+            notifications::UpdateType::AuthRequestResponse,
         );
     } else {
         auth_request.delete(&db).await?;
-        auth_request.set_approved(false);
     }
 
     Ok(Json(auth_request.to_json(&base_url)))

@@ -530,11 +530,12 @@ pub async fn push_send_update(
     }
 }
 
-pub async fn push_auth_request(
+pub async fn push_auth_update(
     env: &Env,
     user_id: &str,
     auth_request_id: &str,
     context_id: Option<&str>,
+    update_type: i32,
 ) {
     let Some(cfg) = try_get_push_config(env) else {
         return;
@@ -548,7 +549,7 @@ pub async fn push_auth_request(
         "organizationId": null,
         "deviceId": device.as_ref().and_then(|d| d.push_uuid.as_deref()),
         "identifier": device.as_ref().map(|d| d.identifier.as_str()),
-        "type": 15,
+        "type": update_type,
         "payload": {
             "userId": user_id,
             "id": auth_request_id,
@@ -557,37 +558,6 @@ pub async fn push_auth_request(
         "installationId": null,
     });
     if let Err(e) = send_to_push_relay(&cfg, &payload).await {
-        log::warn!("Push relay failed for auth_request: {e}");
-    }
-}
-
-pub async fn push_auth_response(
-    env: &Env,
-    user_id: &str,
-    auth_request_id: &str,
-    context_id: Option<&str>,
-) {
-    let Some(cfg) = try_get_push_config(env) else {
-        return;
-    };
-    if !user_has_push_device(env, user_id).await.unwrap_or(false) {
-        return;
-    }
-    let device = resolve_device_info(env, user_id, context_id).await;
-    let payload = json!({
-        "userId": user_id,
-        "organizationId": null,
-        "deviceId": device.as_ref().and_then(|d| d.push_uuid.as_deref()),
-        "identifier": device.as_ref().map(|d| d.identifier.as_str()),
-        "type": 16,
-        "payload": {
-            "userId": user_id,
-            "id": auth_request_id,
-        },
-        "clientType": null,
-        "installationId": null,
-    });
-    if let Err(e) = send_to_push_relay(&cfg, &payload).await {
-        log::warn!("Push relay failed for auth_response: {e}");
+        log::warn!("Push relay failed for auth update (type {update_type}): {e}");
     }
 }

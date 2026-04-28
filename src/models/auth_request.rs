@@ -3,7 +3,7 @@ use serde_json::{json, Value};
 use uuid::Uuid;
 use worker::{query, D1Database};
 
-use chrono::{Duration, Utc};
+use chrono::{Duration, NaiveDateTime, Utc};
 
 use crate::{crypto::ct_eq, db, error::AppError, models::device::DeviceType};
 
@@ -81,9 +81,9 @@ impl AuthRequest {
 
     pub fn request_approved_value(&self) -> Value {
         match self.approved {
-            Some(0) => Value::Bool(false),
+            // bitwarden/server will map null to false, but Vaultwarden won't.
             Some(1) => Value::Bool(true),
-            _ => Value::Null,
+            _ => Value::Bool(false),
         }
     }
 
@@ -97,6 +97,17 @@ impl AuthRequest {
 
     pub fn check_access_code(&self, access_code: &str) -> bool {
         ct_eq(&self.access_code, access_code)
+    }
+
+    /// Whether this auth request has expired (creation_date + EXPIRY_MINUTES has passed).
+    pub fn is_expired(&self) -> bool {
+        let Ok(created) =
+            NaiveDateTime::parse_from_str(&self.creation_date, "%Y-%m-%dT%H:%M:%S%.3fZ")
+        else {
+            return true; // unparseable date → treat as expired
+        };
+        let created_utc = created.and_utc();
+        Utc::now() >= created_utc + Duration::minutes(AUTH_REQUEST_EXPIRY_MINUTES)
     }
 
     pub async fn insert(&self, db: &D1Database) -> Result<(), AppError> {
@@ -127,35 +138,24 @@ impl AuthRequest {
         Ok(())
     }
 
+    // Only update fields that change after creation (approval/response).
+    // Immutable fields (user_id, request_device_identifier, device_type, request_ip,
+    // access_code, public_key, creation_date) are excluded.
     pub async fn update(&self, db: &D1Database) -> Result<(), AppError> {
         query!(
             db,
             "UPDATE auth_requests
-             SET user_id = ?1,
-                 request_device_identifier = ?2,
-                 device_type = ?3,
-                 request_ip = ?4,
-                 response_device_id = ?5,
-                 access_code = ?6,
-                 public_key = ?7,
-                 enc_key = ?8,
-                 master_password_hash = ?9,
-                 approved = ?10,
-                 creation_date = ?11,
-                 response_date = ?12,
-                 authentication_date = ?13
-             WHERE id = ?14",
-            &self.user_id,
-            &self.request_device_identifier,
-            self.device_type,
-            &self.request_ip,
+             SET response_device_id = ?1,
+                 enc_key = ?2,
+                 master_password_hash = ?3,
+                 approved = ?4,
+                 response_date = ?5,
+                 authentication_date = ?6
+             WHERE id = ?7",
             self.response_device_id.as_deref(),
-            &self.access_code,
-            &self.public_key,
             self.enc_key.as_deref(),
             self.master_password_hash.as_deref(),
             self.approved,
-            &self.creation_date,
             self.response_date.as_deref(),
             self.authentication_date.as_deref(),
             &self.id
@@ -238,32 +238,22 @@ impl AuthRequest {
     }
 
     pub async fn delete_created_before(db: &D1Database, cutoff: &str) -> Result<u32, AppError> {
-        let count_row: Option<Value> = query!(
+        let result = query!(
             db,
-            "SELECT COUNT(*) as count FROM auth_requests WHERE creation_date < ?1",
+            "DELETE FROM auth_requests WHERE creation_date < ?1",
             cutoff
         )
         .map_err(|_| AppError::Database)?
-        .first(None)
+        .run()
         .await
         .map_err(|_| AppError::Database)?;
 
-        let count = count_row
-            .and_then(|v| v.get("count").and_then(|c| c.as_u64()))
+        let changes = result
+            .meta()
+            .map_err(|_| AppError::Database)?
+            .and_then(|m| m.changes)
             .unwrap_or(0) as u32;
 
-        if count > 0 {
-            query!(
-                db,
-                "DELETE FROM auth_requests WHERE creation_date < ?1",
-                cutoff
-            )
-            .map_err(|_| AppError::Database)?
-            .run()
-            .await
-            .map_err(|_| AppError::Database)?;
-        }
-
-        Ok(count)
+        Ok(changes)
     }
 }

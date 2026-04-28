@@ -1,5 +1,5 @@
 use axum::{extract::State, http::HeaderMap, Form, Json};
-use chrono::{DateTime, Duration, Utc};
+use chrono::{Duration, Utc};
 use constant_time_eq::constant_time_eq;
 use jwt_compact::AlgorithmExt;
 use jwt_compact::{alg::Hs256Key, Claims as JwtClaims, Header, UntrustedToken};
@@ -19,7 +19,7 @@ use crate::{
         twofactor::{is_twofactor_enabled, list_user_twofactors},
     },
     models::{
-        auth_request::{AuthRequest, AUTH_REQUEST_EXPIRY_MINUTES},
+        auth_request::AuthRequest,
         device::{Device, DeviceType},
         twofactor::{TwoFactor, TwoFactorType},
         user::User,
@@ -241,14 +241,9 @@ async fn authenticate_password_grant(
             .ok_or_else(|| {
                 AppError::BadRequest("Auth request not found. Try again.".to_string())
             })?;
-        let request_expired = Utc::now()
-            >= DateTime::parse_from_rfc3339(&auth_request.creation_date)
-                .map(|value| value.with_timezone(&Utc))
-                .map_err(|_| AppError::Internal)?
-                + Duration::minutes(AUTH_REQUEST_EXPIRY_MINUTES);
 
         if !auth_request.is_approved()
-            || request_expired
+            || auth_request.is_expired()
             || auth_request.request_ip != request_ip_from_headers(headers)
             || auth_request.request_device_identifier != device_request.identifier
             || auth_request.device_type != device_request.r#type
