@@ -387,9 +387,9 @@ pub fn publish_send_update(
 pub fn publish_auth_update(
     env: Env,
     user_id: String,
+    update_type: UpdateType,
     auth_request_id: String,
     context_id: Option<String>,
-    update_type: UpdateType,
 ) {
     crate::background::spawn_background(async move {
         let ws_bytes = create_update(
@@ -406,9 +406,9 @@ pub fn publish_auth_update(
             push::push_auth_update(
                 &env,
                 &user_id,
+                update_type as i32,
                 &auth_request_id,
                 context_id.as_deref(),
-                update_type as i32,
             ),
         );
     });

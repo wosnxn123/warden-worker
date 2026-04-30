@@ -82,9 +82,9 @@ pub async fn post_auth_request(
     notifications::publish_auth_update(
         (*env).clone(),
         user.id,
+        notifications::UpdateType::AuthRequest,
         auth_request.id,
         Some(auth_request.request_device_identifier),
-        notifications::UpdateType::AuthRequest,
     );
 
     Ok(Json(response))
@@ -175,9 +175,9 @@ pub async fn put_auth_request(
         notifications::publish_auth_update(
             (*env).clone(),
             auth_request.user_id.clone(),
+            notifications::UpdateType::AuthRequestResponse,
             auth_request.id.clone(),
             Some(claims.device),
-            notifications::UpdateType::AuthRequestResponse,
         );
     } else {
         auth_request.delete(&db).await?;

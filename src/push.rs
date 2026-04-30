@@ -533,9 +533,9 @@ pub async fn push_send_update(
 pub async fn push_auth_update(
     env: &Env,
     user_id: &str,
+    update_type: i32,
     auth_request_id: &str,
     context_id: Option<&str>,
-    update_type: i32,
 ) {
     let Some(cfg) = try_get_push_config(env) else {
         return;
