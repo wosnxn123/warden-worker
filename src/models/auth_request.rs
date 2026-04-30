@@ -58,14 +58,14 @@ impl AuthRequest {
 
     pub fn to_json(&self, origin: &str) -> Value {
         json!({
-            "id": &self.id,
-            "publicKey": &self.public_key,
+            "id": self.id,
+            "publicKey": self.public_key,
             "requestDeviceType": DeviceType::from_i32(self.device_type).display_name(),
-            "requestIpAddress": &self.request_ip,
-            "key": &self.enc_key,
-            "masterPasswordHash": &self.master_password_hash,
-            "creationDate": &self.creation_date,
-            "responseDate": &self.response_date,
+            "requestIpAddress": self.request_ip,
+            "key": self.enc_key,
+            "masterPasswordHash": self.master_password_hash,
+            "creationDate": self.creation_date,
+            "responseDate": self.response_date,
             "requestApproved": self.request_approved_value(),
             "origin": origin,
             "object": "auth-request",
@@ -74,8 +74,8 @@ impl AuthRequest {
 
     pub fn to_pending_device_json(&self) -> Value {
         json!({
-            "id": &self.id,
-            "creationDate": &self.creation_date,
+            "id": self.id,
+            "creationDate": self.creation_date,
         })
     }
 
