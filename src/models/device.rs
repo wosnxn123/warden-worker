@@ -313,6 +313,7 @@ pub enum DeviceType {
     WindowsCli = 23,
     MacOsCli = 24,
     LinuxCli = 25,
+    DuckDuckGoBrowser = 26,
 }
 
 impl DeviceType {
@@ -344,6 +345,7 @@ impl DeviceType {
             23 => Some(Self::WindowsCli),
             24 => Some(Self::MacOsCli),
             25 => Some(Self::LinuxCli),
+            26 => Some(Self::DuckDuckGoBrowser),
             _ => None,
         }
     }
@@ -388,6 +390,7 @@ impl DeviceType {
             "windows cli" => Some(Self::WindowsCli),
             "macos cli" => Some(Self::MacOsCli),
             "linux cli" => Some(Self::LinuxCli),
+            "duckduckgo" => Some(Self::DuckDuckGoBrowser),
             _ => None,
         }
     }
@@ -429,6 +432,7 @@ impl DeviceType {
             Self::WindowsCli => "Windows CLI",
             Self::MacOsCli => "macOS CLI",
             Self::LinuxCli => "Linux CLI",
+            Self::DuckDuckGoBrowser => "DuckDuckGo",
         }
     }
 
