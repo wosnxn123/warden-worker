@@ -16,9 +16,9 @@ jobs:
       WORKER_BUILD_VERSION: "0.8.1"
       WRANGLER_VERSION: "4.82.1"
       # Web Vault frontend (bw_web_builds) version tag (default pinned; override via GitHub Actions Variables)
-      # - Set repository variable BW_WEB_VERSION (e.g. v2026.3.1) to override
+      # - Set repository variable BW_WEB_VERSION (e.g. v2026.4.1) to override
       # - Set to "latest" to follow the latest bw_web_builds release
-      BW_WEB_VERSION: ${{ vars.BW_WEB_VERSION || 'v2026.3.1' }}
+      BW_WEB_VERSION: ${{ vars.BW_WEB_VERSION || 'v2026.4.1' }}
 
       # Required for wrangler
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
