@@ -16,6 +16,7 @@ pub fn api_router(env: Env) -> Router {
     Router::new()
         // Identity/Auth routes
         .route("/identity/accounts/prelogin", post(accounts::prelogin))
+        .route("/identity/accounts/prelogin/password", post(accounts::prelogin))
         .route("/identity/accounts/register", post(accounts::register))
         .route(
             "/identity/accounts/register/finish",
