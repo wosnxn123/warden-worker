@@ -112,15 +112,6 @@ pub struct DisableTwoFactorData {
     pub r#type: i32,
 }
 
-/// POST /api/two-factor/get-recover - Get recovery code
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RecoverTwoFactor {
-    pub master_password_hash: String,
-    pub email: String,
-    pub recovery_code: String,
-}
-
 /// DELETE /api/two-factor/authenticator - Disable TOTP with key verification
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]

@@ -10,8 +10,8 @@ use crate::{
     error::AppError,
     handlers::allow_totp_drift,
     models::twofactor::{
-        DisableAuthenticatorData, DisableTwoFactorData, EnableAuthenticatorData, RecoverTwoFactor,
-        TwoFactor, TwoFactorType,
+        DisableAuthenticatorData, DisableTwoFactorData, EnableAuthenticatorData, TwoFactor,
+        TwoFactorType,
     },
     models::user::{PasswordOrOtpData, User},
 };
@@ -375,71 +375,6 @@ pub async fn get_recover(
         "code": user.totp_recover,
         "object": "twoFactorRecover"
     })))
-}
-
-/// POST /api/two-factor/recover - Use recovery code to disable all 2FA
-#[worker::send]
-pub async fn recover(
-    State(env): State<Arc<Env>>,
-    Json(data): Json<RecoverTwoFactor>,
-) -> Result<Json<Value>, AppError> {
-    let db = db::get_db(&env)?;
-
-    // Get user by email
-    let user_value: Value = db
-        .prepare("SELECT * FROM users WHERE email = ?1")
-        .bind(&[data.email.to_lowercase().into()])?
-        .first(None)
-        .await
-        .map_err(|_| AppError::Database)?
-        .ok_or_else(|| AppError::Unauthorized("Username or password is incorrect".to_string()))?;
-    let user: User = serde_json::from_value(user_value).map_err(|_| AppError::Internal)?;
-
-    // Verify master password
-    let verification = user
-        .verify_master_password(&data.master_password_hash)
-        .await?;
-    if !verification.is_valid() {
-        return Err(AppError::Unauthorized(
-            "Username or password is incorrect".to_string(),
-        ));
-    }
-
-    // Check recovery code (case-insensitive)
-    let is_valid = user.totp_recover.as_ref().is_some_and(|stored_code| {
-        ct_eq(
-            &stored_code.to_uppercase(),
-            &data.recovery_code.to_uppercase(),
-        )
-    });
-
-    if !is_valid {
-        return Err(AppError::BadRequest(
-            "Recovery code is incorrect. Try again.".to_string(),
-        ));
-    }
-
-    // Delete all 2FA methods
-    query!(&db, "DELETE FROM twofactor WHERE user_uuid = ?1", &user.id)
-        .map_err(|_| AppError::Database)?
-        .run()
-        .await
-        .map_err(|_| AppError::Database)?;
-
-    // Clear recovery code
-    query!(
-        &db,
-        "UPDATE users SET totp_recover = NULL WHERE id = ?1",
-        &user.id
-    )
-    .map_err(|_| AppError::Database)?
-    .run()
-    .await
-    .map_err(|_| AppError::Database)?;
-
-    log::info!("User {} recovered 2FA using recovery code", user.id);
-
-    Ok(Json(serde_json::json!({})))
 }
 
 // Helper functions

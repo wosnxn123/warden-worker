@@ -16,7 +16,10 @@ pub fn api_router(env: Env) -> Router {
     Router::new()
         // Identity/Auth routes
         .route("/identity/accounts/prelogin", post(accounts::prelogin))
-        .route("/identity/accounts/prelogin/password", post(accounts::prelogin))
+        .route(
+            "/identity/accounts/prelogin/password",
+            post(accounts::prelogin),
+        )
         .route("/identity/accounts/register", post(accounts::register))
         .route(
             "/identity/accounts/register/finish",
@@ -32,7 +35,7 @@ pub fn api_router(env: Env) -> Router {
         // For on-demand sync checks
         .route("/api/accounts/revision-date", get(accounts::revision_date))
         .route("/api/accounts/password-hint", post(accounts::password_hint))
-        .route("/api/accounts/tasks", get(accounts::get_tasks))
+        .route("/api/tasks", get(accounts::get_tasks))
         .route("/api/accounts/profile", get(accounts::get_profile))
         .route("/api/accounts/profile", post(accounts::post_profile))
         .route("/api/accounts/profile", put(accounts::put_profile))
@@ -257,6 +260,5 @@ pub fn api_router(env: Env) -> Router {
             put(twofactor::disable_twofactor_put),
         )
         .route("/api/two-factor/get-recover", post(twofactor::get_recover))
-        .route("/api/two-factor/recover", post(twofactor::recover))
         .with_state(app_state)
 }

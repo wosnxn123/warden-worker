@@ -58,11 +58,10 @@ function normalizePathname(pathname) {
 async function getHeavyDoShardKey(request, url) {
   const pathname = url.pathname;
 
-  // Registration endpoints and 2FA recovery are not JWT-authenticated; request body uses `email` as username.
+  // Registration endpoints are not JWT-authenticated; request body uses `email` as username.
   if (
     pathname === "/identity/accounts/register" ||
-    pathname === "/identity/accounts/register/finish" ||
-    pathname === "/api/two-factor/recover"
+    pathname === "/identity/accounts/register/finish"
   ) {
     try {
       const body = await request.clone().json();
@@ -111,7 +110,6 @@ const HEAVY_DO_ROUTE_METHODS = new Map([
   ["/api/two-factor/authenticator", new Set(["POST", "PUT", "DELETE"])],
   ["/api/two-factor/disable", new Set(["POST", "PUT"])],
   ["/api/two-factor/get-recover", new Set(["POST"])],
-  ["/api/two-factor/recover", new Set(["POST"])],
 ]);
 
 function shouldOffloadToHeavyDo(request, url) {

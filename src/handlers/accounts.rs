@@ -393,7 +393,7 @@ pub async fn revision_date(
     Ok(Json(revision_date))
 }
 
-/// GET /api/accounts/tasks
+/// GET /api/tasks
 ///
 /// Vaultwarden returns an empty list here; some official clients call this endpoint.
 /// We don't implement task workflows, so always return an empty list.
@@ -958,19 +958,6 @@ pub async fn post_rotatekey(
 }
 
 /// POST /accounts/kdf - Change KDF settings (PBKDF2 <-> Argon2id)
-///
-/// API Format History:
-/// - Bitwarden switched to complex format in v2025.10.0
-/// - Vaultwarden followed in PR #6458, WITHOUT backward compatibility
-/// - We implement backward compatibility to support both formats
-///
-/// Supports two request formats:
-///
-/// 1. Simple/Legacy format (Bitwarden < v2025.10.0, e.g. web vault 2025.07):
-/// { "kdf": 0, "kdfIterations": 650000, "key": "...", "masterPasswordHash": "...", "newMasterPasswordHash": "..." }
-///
-/// 2. Complex format (Bitwarden >= v2025.10.0, e.g. official client 2025.11.x):
-/// { "authenticationData": {...}, "unlockData": {...}, "key": "...", "masterPasswordHash": "...", "newMasterPasswordHash": "..." }
 #[worker::send]
 pub async fn post_kdf(
     claims: Claims,
@@ -999,43 +986,38 @@ pub async fn post_kdf(
         return Err(AppError::Unauthorized("Invalid password".to_string()));
     }
 
-    // Additional validation for complex format
-    if let (Some(ref auth_data), Some(ref unlock_data)) =
-        (&payload.authentication_data, &payload.unlock_data)
-    {
-        // KDF settings must match between authentication and unlock
-        if auth_data.kdf != unlock_data.kdf {
-            return Err(AppError::BadRequest(
-                "KDF settings must be equal for authentication and unlock".to_string(),
-            ));
-        }
-        // Salt (email) must match
-        if user.email != auth_data.salt || user.email != unlock_data.salt {
-            return Err(AppError::BadRequest(
-                "Invalid master password salt".to_string(),
-            ));
-        }
+    let auth_data = &payload.authentication_data;
+    let unlock_data = &payload.unlock_data;
+
+    if auth_data.kdf != unlock_data.kdf {
+        return Err(AppError::BadRequest(
+            "KDF settings must be equal for authentication and unlock".to_string(),
+        ));
     }
 
-    // Extract KDF parameters from either format
-    let (kdf_type, kdf_iterations, kdf_memory, kdf_parallelism) = payload
-        .get_kdf_params()
-        .ok_or_else(|| AppError::BadRequest("Missing KDF parameters".to_string()))?;
+    if user.email != auth_data.salt || user.email != unlock_data.salt {
+        return Err(AppError::BadRequest(
+            "Invalid master password salt".to_string(),
+        ));
+    }
 
-    // Validate new KDF parameters
+    let kdf_type = unlock_data.kdf.kdf;
+    let kdf_iterations = unlock_data.kdf.kdf_iterations;
+    let kdf_memory = unlock_data.kdf.kdf_memory;
+    let kdf_parallelism = unlock_data.kdf.kdf_parallelism;
+
     ensure_supported_kdf(kdf_type, kdf_iterations, kdf_memory, kdf_parallelism)?;
 
     // Generate new salt and hash the new password
     let new_salt = generate_salt()?;
     let password_iterations = server_password_iterations(&env) as i32;
     let new_hashed_password = hash_password_for_storage(
-        payload.get_new_password_hash(),
+        &auth_data.master_password_authentication_hash,
         &new_salt,
         password_iterations as u32,
     )
     .await?;
 
-    // Generate new security stamp
     let new_security_stamp = Uuid::new_v4().to_string();
     let now = db::now_string();
 
@@ -1047,17 +1029,13 @@ pub async fn post_kdf(
         (None, None)
     };
 
-    // Get the new encrypted user key
-    let new_key = payload.get_new_key();
-
-    // Update user record with new KDF settings and password
     query!(
         &db,
         "UPDATE users SET master_password_hash = ?1, password_salt = ?2, password_iterations = ?3, key = ?4, kdf_type = ?5, kdf_iterations = ?6, kdf_memory = ?7, kdf_parallelism = ?8, security_stamp = ?9, updated_at = ?10 WHERE id = ?11",
         new_hashed_password,
         new_salt,
         password_iterations,
-        new_key,
+        &unlock_data.master_key_wrapped_user_key,
         kdf_type,
         kdf_iterations,
         final_kdf_memory,
