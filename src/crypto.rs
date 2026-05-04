@@ -71,56 +71,37 @@ pub async fn webcrypto_pbkdf2_sha256(
     key_length_bits: u32,
 ) -> Result<Vec<u8>, AppError> {
     let subtle = subtle_crypto()?;
-
-    let algorithm = js_sys::Object::new();
-    js_sys::Reflect::set(
-        &algorithm,
-        &JsValue::from_str("name"),
-        &JsValue::from_str("PBKDF2"),
-    )
-    .map_err(|e| AppError::Crypto(format!("Failed to set algorithm: {e:?}")))?;
-
+    // Import the password as a raw key material
     let password_array = Uint8Array::new_from_slice(password);
-    let key_usages = js_sys::Array::of1(&JsValue::from_str("deriveBits"));
-
     let base_key = JsFuture::from(
         subtle
-            .import_key_with_object("raw", &password_array, &algorithm, false, &key_usages)
+            .import_key_with_str(
+                "raw",
+                password_array.as_ref(),
+                "PBKDF2",
+                false,
+                &js_sys::Array::of1(&JsValue::from_str("deriveBits")),
+            )
             .map_err(|e| AppError::Crypto(format!("PBKDF2 import_key failed: {e:?}")))?,
     )
     .await
     .map_err(|e| AppError::Crypto(format!("PBKDF2 import_key await failed: {e:?}")))?;
-
-    let derive_params = js_sys::Object::new();
-    js_sys::Reflect::set(
-        &derive_params,
-        &JsValue::from_str("name"),
-        &JsValue::from_str("PBKDF2"),
-    )
-    .map_err(|e| AppError::Crypto(format!("Failed to set derive params: {e:?}")))?;
     let salt_array = Uint8Array::new_from_slice(salt);
-    js_sys::Reflect::set(&derive_params, &JsValue::from_str("salt"), &salt_array)
-        .map_err(|e| AppError::Crypto(format!("Failed to set salt: {e:?}")))?;
-    js_sys::Reflect::set(
-        &derive_params,
-        &JsValue::from_str("iterations"),
-        &JsValue::from_f64(iterations as f64),
-    )
-    .map_err(|e| AppError::Crypto(format!("Failed to set iterations: {e:?}")))?;
-
-    let hash_obj = js_sys::Object::new();
-    js_sys::Reflect::set(
-        &hash_obj,
-        &JsValue::from_str("name"),
-        &JsValue::from_str("SHA-256"),
-    )
-    .map_err(|e| AppError::Crypto(format!("Failed to set hash: {e:?}")))?;
-    js_sys::Reflect::set(&derive_params, &JsValue::from_str("hash"), &hash_obj)
-        .map_err(|e| AppError::Crypto(format!("Failed to set hash obj: {e:?}")))?;
-
+    // Define PBKDF2 parameters
+    let derive_params = web_sys::Pbkdf2Params::new(
+        "PBKDF2",
+        JsValue::from_str("SHA-256").as_ref(),
+        iterations,
+        salt_array.as_ref(),
+    );
+    // Derive the bits
     let derived = JsFuture::from(
         subtle
-            .derive_bits_with_object(&derive_params, &CryptoKey::from(base_key), key_length_bits)
+            .derive_bits_with_object(
+                derive_params.as_ref(),
+                &CryptoKey::from(base_key),
+                key_length_bits,
+            )
             .map_err(|e| AppError::Crypto(format!("PBKDF2 deriveBits failed: {e:?}")))?,
     )
     .await
