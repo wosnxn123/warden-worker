@@ -15,6 +15,10 @@
 bit-nav-item[route="settings/subscription"],
 a[href$="/settings/sponsored-families"],
 
+/* Unsupported forwarding email alias options */
+ng-dropdown-panel div.ng-dropdown-panel-items div:has(> [title="Firefox Relay"]),
+ng-dropdown-panel div.ng-dropdown-panel-items div:has(> [title="DuckDuckGo"]),
+
 /* SSO UI (newer builds, if present) */
 .vw-email-sso,
 .vw-sso-login,
@@ -23,11 +27,6 @@ a[href$="/settings/sponsored-families"],
 
 /* Passkey/WebAuthn login UI (newer builds, if present) */
 .vw-passkey-login,
-
-/* Legacy selectors for older web vault builds (< 2025.5.1) */
-app-root ng-component > form > div:nth-child(1) > div > button[buttontype="secondary"].\!tw-text-primary-600:nth-child(4),
-app-root ng-component > form > div:nth-child(1) > div > button[buttontype="secondary"].\!tw-text-primary-600:nth-child(3),
-app-root ng-component > form > div:nth-child(1) > div:nth-child(3) > div:nth-child(2),
 
 /* Org-related / enterprise UI */
 app-organization-plans > form > bit-section:nth-child(2),
@@ -40,7 +39,7 @@ bit-dialog div.tw-col-span-4:has(input[formcontrolname*="access"], input[formcon
 app-security > app-two-factor-setup > form,
 app-user-layout app-danger-zone button:nth-child(1),
 
-/* Two-factor providers (hide unsupported ones; keep authenticator/TOTP visible) */
+/* Two-factor providers (hide unsupported ones) */
 /* Email */
 .providers-2fa-1,
 
