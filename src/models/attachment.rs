@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
-use worker::{query, D1Database};
 
+use crate::d1_query;
 use crate::{db, error::AppError};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -39,7 +39,7 @@ impl AttachmentDB {
     /// Atomically move a pending attachment record into the attachments table,
     /// delete the pending row, and touch cipher `updated_at` timestamps.
     /// Returns the `now` timestamp used.
-    pub async fn finalize_pending(&mut self, db: &D1Database) -> Result<String, AppError> {
+    pub async fn finalize_pending(&mut self, db: &crate::db::Db) -> Result<String, AppError> {
         let now = db::now_string();
         if self.created_at.is_empty() {
             self.created_at = now.clone();
@@ -47,7 +47,7 @@ impl AttachmentDB {
         self.updated_at = now.clone();
 
         db.batch(vec![
-            query!(
+            d1_query!(
                 db,
                 "INSERT INTO attachments (id, cipher_id, file_name, file_size, akey, created_at, updated_at, organization_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                 self.id,
@@ -60,9 +60,9 @@ impl AttachmentDB {
                 self.organization_id
             )
             .map_err(|_| AppError::Database)?,
-            query!(db, "DELETE FROM attachments_pending WHERE id = ?1", self.id)
+            d1_query!(db, "DELETE FROM attachments_pending WHERE id = ?1", self.id)
                 .map_err(|_| AppError::Database)?,
-            query!(db, "UPDATE ciphers SET updated_at = ?1 WHERE id = ?2", &now, self.cipher_id)
+            d1_query!(db, "UPDATE ciphers SET updated_at = ?1 WHERE id = ?2", &now, self.cipher_id)
                 .map_err(|_| AppError::Database)?,
         ])
         .await?;

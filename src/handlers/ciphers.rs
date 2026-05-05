@@ -8,7 +8,8 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
 use uuid::Uuid;
-use worker::{query, wasm_bindgen::JsValue, Env};
+use crate::d1_query;
+use worker::{wasm_bindgen::JsValue, Env};
 
 use crate::auth::Claims;
 use crate::db;
@@ -33,7 +34,7 @@ impl IntoResponse for RawJson {
 
 /// Helper to fetch a cipher by id for a user or return NotFound.
 async fn fetch_cipher_for_user(
-    db: &worker::D1Database,
+    db: &crate::db::Db,
     cipher_id: &str,
     user_id: &str,
 ) -> Result<CipherDBModel, AppError> {
@@ -89,7 +90,7 @@ pub async fn create_cipher(
 
     let data = serde_json::to_string(&cipher.data).map_err(|_| AppError::Internal)?;
 
-    query!(
+    d1_query!(
         &db,
         "INSERT INTO ciphers (id, user_id, organization_id, type, data, favorite, folder_id, created_at, updated_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
@@ -204,7 +205,7 @@ pub async fn update_cipher(
 
     let data = serde_json::to_string(&cipher.data).map_err(|_| AppError::Internal)?;
 
-    query!(
+    d1_query!(
         &db,
         "UPDATE ciphers SET organization_id = ?1, type = ?2, data = ?3, favorite = ?4, folder_id = ?5, updated_at = ?6 WHERE id = ?7 AND user_id = ?8",
         cipher.organization_id,
@@ -221,7 +222,7 @@ pub async fn update_cipher(
 
     if let Some(attachments2) = &cipher_data_req.attachments2 {
         for (attachment_id, attachment) in attachments2 {
-            let result = query!(
+            let result = d1_query!(
                 &db,
                 "UPDATE attachments SET file_name = ?1, akey = ?2, updated_at = ?3 WHERE id = ?4 AND cipher_id = ?5",
                 attachment.file_name,
@@ -334,7 +335,7 @@ pub async fn update_cipher_partial(
 
     let now = db::now_string();
 
-    query!(
+    d1_query!(
         &db,
         "UPDATE ciphers SET folder_id = ?1, favorite = ?2, updated_at = ?3 WHERE id = ?4 AND user_id = ?5",
         payload.folder_id,
@@ -370,7 +371,7 @@ pub async fn soft_delete_cipher(
     fetch_cipher_for_user(&db, &id, &claims.sub).await?;
     let now = db::now_string();
 
-    query!(
+    d1_query!(
         &db,
         "UPDATE ciphers SET deleted_at = ?1, updated_at = ?1 WHERE id = ?2 AND user_id = ?3",
         now,
@@ -407,7 +408,7 @@ pub async fn soft_delete_ciphers_bulk(
     let db = db::get_db(&env)?;
     let now = db::now_string();
 
-    query!(
+    d1_query!(
         &db,
         "UPDATE ciphers SET deleted_at = ?1, updated_at = ?1 WHERE user_id = ?2 AND id IN (SELECT value FROM json_each(?3, '$.ids'))",
         now,
@@ -456,7 +457,7 @@ pub async fn hard_delete_cipher(
         attachments::delete_storage_objects(env.as_ref(), &keys).await?;
     }
 
-    query!(
+    d1_query!(
         &db,
         "DELETE FROM ciphers WHERE id = ?1 AND user_id = ?2",
         id,
@@ -503,7 +504,7 @@ pub async fn hard_delete_ciphers_bulk(
         attachments::delete_storage_objects(env.as_ref(), &keys).await?;
     }
 
-    query!(
+    d1_query!(
         &db,
         "DELETE FROM ciphers WHERE user_id = ?1 AND id IN (SELECT value FROM json_each(?2, '$.ids'))",
         claims.sub,
@@ -540,7 +541,7 @@ pub async fn restore_cipher(
     let now = db::now_string();
 
     // Update the cipher to clear deleted_at
-    query!(
+    d1_query!(
         &db,
         "UPDATE ciphers SET deleted_at = NULL, updated_at = ?1 WHERE id = ?2 AND user_id = ?3",
         now,
@@ -582,7 +583,7 @@ pub async fn restore_ciphers_bulk(
     let now = db::now_string();
 
     // Single bulk UPDATE using json_each() with path
-    query!(
+    d1_query!(
         &db,
         "UPDATE ciphers SET deleted_at = NULL, updated_at = ?1 WHERE user_id = ?2 AND id IN (SELECT value FROM json_each(?3, '$.ids'))",
         now,
@@ -629,7 +630,7 @@ pub async fn archive_cipher(
     })?;
     let now = db::now_string();
 
-    query!(
+    d1_query!(
         &db,
         "UPDATE ciphers SET archived_at = ?1, updated_at = ?1 WHERE id = ?2 AND user_id = ?3",
         now,
@@ -673,7 +674,7 @@ pub async fn unarchive_cipher(
     })?;
     let now = db::now_string();
 
-    query!(
+    d1_query!(
         &db,
         "UPDATE ciphers SET archived_at = NULL, updated_at = ?1 WHERE id = ?2 AND user_id = ?3",
         now,
@@ -713,7 +714,7 @@ pub async fn archive_ciphers_bulk(
     let db = db::get_db(&env)?;
     let now = db::now_string();
 
-    query!(
+    d1_query!(
         &db,
         "UPDATE ciphers SET archived_at = ?1, updated_at = ?1 WHERE user_id = ?2 AND id IN (SELECT value FROM json_each(?3, '$.ids'))",
         now,
@@ -756,7 +757,7 @@ pub async fn unarchive_ciphers_bulk(
     let db = db::get_db(&env)?;
     let now = db::now_string();
 
-    query!(
+    d1_query!(
         &db,
         "UPDATE ciphers SET archived_at = NULL, updated_at = ?1 WHERE user_id = ?2 AND id IN (SELECT value FROM json_each(?3, '$.ids'))",
         now,
@@ -829,7 +830,7 @@ pub async fn create_cipher_simple(
 
     let data = serde_json::to_string(&cipher.data).map_err(|_| AppError::Internal)?;
 
-    query!(
+    d1_query!(
         &db,
         "INSERT INTO ciphers (id, user_id, organization_id, type, data, favorite, folder_id, created_at, updated_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
@@ -962,13 +963,13 @@ pub async fn purge_vault(
     }
 
     // Delete all user's ciphers (both active and soft-deleted)
-    query!(&db, "DELETE FROM ciphers WHERE user_id = ?1", user_id)
+    d1_query!(&db, "DELETE FROM ciphers WHERE user_id = ?1", user_id)
         .map_err(|_| AppError::Database)?
         .run()
         .await?;
 
     // Delete all user's folders
-    query!(&db, "DELETE FROM folders WHERE user_id = ?1", user_id)
+    d1_query!(&db, "DELETE FROM folders WHERE user_id = ?1", user_id)
         .map_err(|_| AppError::Database)?
         .run()
         .await?;
@@ -1106,7 +1107,7 @@ fn is_sqlite_toobig(err: &worker::Error) -> bool {
 /// Build a `{"data":[...],"object":"list","continuationToken":null}` response
 /// using raw SQL JSON construction (no Rust-side parsing).
 async fn build_cipher_list_response(
-    db: &worker::D1Database,
+    db: &crate::db::Db,
     env: &Env,
     where_clause: &str,
     params: &[JsValue],
@@ -1134,7 +1135,7 @@ async fn build_cipher_list_response(
 /// This avoids JSON parsing in Rust, significantly reducing CPU time.
 pub(crate) async fn append_cipher_json_array_raw(
     out: &mut String,
-    db: &worker::D1Database,
+    db: &crate::db::Db,
     attachments_enabled: bool,
     where_clause: &str,
     params: &[JsValue],
@@ -1191,7 +1192,7 @@ pub(crate) async fn append_cipher_json_array_raw(
 /// where the first element is the JSON string we need.
 pub(crate) async fn append_from_rows(
     out: &mut String,
-    db: &worker::D1Database,
+    db: &crate::db::Db,
     attachments_enabled: bool,
     where_clause: &str,
     params: &[JsValue],

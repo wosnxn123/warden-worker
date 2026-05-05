@@ -3,7 +3,9 @@ use glob_match::glob_match;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use uuid::Uuid;
-use worker::{query, D1PreparedStatement, Env};
+use worker::{D1PreparedStatement, Env};
+
+use crate::d1_query;
 
 use super::{get_batch_size, server_password_iterations, two_factor_enabled};
 use crate::{
@@ -272,7 +274,7 @@ pub async fn register(
         updated_at: now,
     };
 
-    query!(
+    d1_query!(
         &db,
         "INSERT INTO users (id, name, email, master_password_hash, master_password_hint, password_salt, password_iterations, key, private_key, public_key, kdf_type, kdf_iterations, kdf_memory, kdf_parallelism, security_stamp, equivalent_domains, excluded_globals, totp_recover, created_at, updated_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
@@ -455,7 +457,7 @@ pub async fn post_profile(
     user.name = Some(payload.name);
     user.updated_at = now.clone();
 
-    query!(
+    d1_query!(
         &db,
         "UPDATE users SET name = ?1, updated_at = ?2 WHERE id = ?3",
         user.name,
@@ -522,7 +524,7 @@ pub async fn put_avatar(
     user.avatar_color = payload.avatar_color;
     user.updated_at = now.clone();
 
-    query!(
+    d1_query!(
         &db,
         "UPDATE users SET avatar_color = ?1, updated_at = ?2 WHERE id = ?3",
         user.avatar_color,
@@ -589,19 +591,19 @@ pub async fn delete_account(
     sends::delete_user_sends(&db, env.as_ref(), user_id).await?;
 
     // Delete all user's ciphers
-    query!(&db, "DELETE FROM ciphers WHERE user_id = ?1", user_id)
+    d1_query!(&db, "DELETE FROM ciphers WHERE user_id = ?1", user_id)
         .map_err(|_| AppError::Database)?
         .run()
         .await?;
 
     // Delete all user's folders
-    query!(&db, "DELETE FROM folders WHERE user_id = ?1", user_id)
+    d1_query!(&db, "DELETE FROM folders WHERE user_id = ?1", user_id)
         .map_err(|_| AppError::Database)?
         .run()
         .await?;
 
     // Delete the user
-    query!(&db, "DELETE FROM users WHERE id = ?1", user_id)
+    d1_query!(&db, "DELETE FROM users WHERE id = ?1", user_id)
         .map_err(|_| AppError::Database)?
         .run()
         .await?;
@@ -653,7 +655,7 @@ pub async fn post_password(
     let now = db::now_string();
 
     // Update user record
-    query!(
+    d1_query!(
         &db,
         "UPDATE users SET master_password_hash = ?1, password_salt = ?2, password_iterations = ?3, key = ?4, master_password_hint = ?5, security_stamp = ?6, updated_at = ?7 WHERE id = ?8",
         new_hashed_password,
@@ -836,7 +838,7 @@ pub async fn post_rotatekey(
         let Some(folder_id) = &folder.id else {
             continue;
         };
-        let stmt = query!(
+        let stmt = d1_query!(
             &db,
             "UPDATE folders SET name = ?1, updated_at = ?2 WHERE id = ?3 AND user_id = ?4",
             folder.name,
@@ -866,7 +868,7 @@ pub async fn post_rotatekey(
 
         let data = serde_json::to_string(&cipher_data).map_err(|_| AppError::Internal)?;
 
-        let stmt = query!(
+        let stmt = d1_query!(
             &db,
             "UPDATE ciphers SET data = ?1, folder_id = ?2, favorite = ?3, updated_at = ?4 WHERE id = ?5 AND user_id = ?6",
             data,
@@ -883,7 +885,7 @@ pub async fn post_rotatekey(
         // The Bitwarden clients send `attachments2` only during key rotation.
         if let Some(attachments2) = &cipher.attachments2 {
             for (attachment_id, attachment) in attachments2 {
-                let stmt = query!(
+                let stmt = d1_query!(
                     &db,
                     "UPDATE attachments SET file_name = ?1, akey = ?2, updated_at = ?3 WHERE id = ?4 AND cipher_id = ?5",
                     attachment.file_name,
@@ -932,7 +934,7 @@ pub async fn post_rotatekey(
     };
 
     // Update user record with new keys and password
-    query!(
+    d1_query!(
         &db,
         "UPDATE users SET master_password_hash = ?1, password_salt = ?2, password_iterations = ?3, key = ?4, private_key = ?5, kdf_type = ?6, kdf_iterations = ?7, kdf_memory = ?8, kdf_parallelism = ?9, security_stamp = ?10, updated_at = ?11 WHERE id = ?12",
         new_hashed_password,
@@ -1029,7 +1031,7 @@ pub async fn post_kdf(
         (None, None)
     };
 
-    query!(
+    d1_query!(
         &db,
         "UPDATE users SET master_password_hash = ?1, password_salt = ?2, password_iterations = ?3, key = ?4, kdf_type = ?5, kdf_iterations = ?6, kdf_memory = ?7, kdf_parallelism = ?8, security_stamp = ?9, updated_at = ?10 WHERE id = ?11",
         new_hashed_password,
@@ -1091,7 +1093,7 @@ pub async fn post_sstamp(
     let new_security_stamp = Uuid::new_v4().to_string();
     let now = db::now_string();
 
-    query!(
+    d1_query!(
         &db,
         "UPDATE users SET security_stamp = ?1, updated_at = ?2 WHERE id = ?3",
         new_security_stamp,

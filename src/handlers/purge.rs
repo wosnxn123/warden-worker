@@ -14,7 +14,9 @@ use crate::notifications::{self, UpdateType};
 use chrono::{Duration, Utc};
 
 use std::collections::HashSet;
-use worker::{query, D1Database, Env};
+use worker::Env;
+
+use crate::d1_query;
 /// Default number of days to keep soft-deleted items before purging
 const DEFAULT_PURGE_DAYS: i64 = 30;
 /// Retain pending attachments for at most this many days before cleanup
@@ -32,27 +34,29 @@ fn get_purge_days(env: &Env) -> i64 {
 
 /// Purge pending attachments older than the configured retention window.
 pub async fn purge_stale_pending_attachments(env: &Env) -> Result<u32, worker::Error> {
-    let db: D1Database = env.d1("vault1")?;
+    let db = crate::db::get_db(env).map_err(|e| worker::Error::RustError(e.to_string()))?;
     let now = Utc::now();
     let pending_cutoff = now - Duration::days(PENDING_RETENTION_DAYS);
     let pending_cutoff_str = pending_cutoff.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
 
-    let pending_count_result = query!(
+    let pending_count_result = d1_query!(
         &db,
         "SELECT COUNT(*) as count FROM attachments_pending WHERE created_at < ?1",
         pending_cutoff_str
-    )?
+    )
+    .map_err(|e| worker::Error::RustError(e.to_string()))?
     .first::<CountResult>(None)
     .await?;
 
     let pending_count = pending_count_result.map(|r| r.count).unwrap_or(0);
 
     if pending_count > 0 {
-        query!(
+        d1_query!(
             &db,
             "DELETE FROM attachments_pending WHERE created_at < ?1",
             pending_cutoff_str
-        )?
+        )
+        .map_err(|e| worker::Error::RustError(e.to_string()))?
         .run()
         .await?;
         log::info!(
@@ -85,7 +89,7 @@ pub async fn purge_deleted_ciphers(env: &Env) -> Result<u32, worker::Error> {
         return Ok(0);
     }
 
-    let db: D1Database = env.d1("vault1")?;
+    let db = crate::db::get_db(env).map_err(|e| worker::Error::RustError(e.to_string()))?;
 
     // Calculate the cutoff timestamp
     let now = Utc::now();
@@ -100,11 +104,12 @@ pub async fn purge_deleted_ciphers(env: &Env) -> Result<u32, worker::Error> {
     );
 
     // First, get the list of affected user IDs before deletion
-    let affected_users_result: Vec<AffectedUser> = query!(
+    let affected_users_result: Vec<AffectedUser> = d1_query!(
         &db,
         "SELECT DISTINCT user_id FROM ciphers WHERE deleted_at IS NOT NULL AND deleted_at < ?1 AND user_id IS NOT NULL",
         cutoff_str
-    )?
+    )
+    .map_err(|e| worker::Error::RustError(e.to_string()))?
     .all()
     .await?
     .results()?;
@@ -115,11 +120,12 @@ pub async fn purge_deleted_ciphers(env: &Env) -> Result<u32, worker::Error> {
         .collect();
 
     // Count the records to be deleted (for logging purposes)
-    let count_result = query!(
+    let count_result = d1_query!(
         &db,
         "SELECT COUNT(*) as count FROM ciphers WHERE deleted_at IS NOT NULL AND deleted_at < ?1",
         cutoff_str
-    )?
+    )
+    .map_err(|e| worker::Error::RustError(e.to_string()))?
     .first::<CountResult>(None)
     .await?;
 
@@ -137,11 +143,12 @@ pub async fn purge_deleted_ciphers(env: &Env) -> Result<u32, worker::Error> {
         }
 
         // Delete the records
-        query!(
+        d1_query!(
             &db,
             "DELETE FROM ciphers WHERE deleted_at IS NOT NULL AND deleted_at < ?1",
             cutoff_str
-        )?
+        )
+        .map_err(|e| worker::Error::RustError(e.to_string()))?
         .run()
         .await?;
 
@@ -149,12 +156,13 @@ pub async fn purge_deleted_ciphers(env: &Env) -> Result<u32, worker::Error> {
 
         // Update the affected users' updated_at to trigger client sync
         for user_id in &affected_user_ids {
-            query!(
+            d1_query!(
                 &db,
                 "UPDATE users SET updated_at = ?1 WHERE id = ?2",
                 now_str,
                 user_id
-            )?
+            )
+            .map_err(|e| worker::Error::RustError(e.to_string()))?
             .run()
             .await?;
 
@@ -179,7 +187,7 @@ pub async fn purge_deleted_ciphers(env: &Env) -> Result<u32, worker::Error> {
 }
 
 pub async fn purge_expired_sends(env: &Env) -> Result<u32, worker::Error> {
-    let db: D1Database = env.d1("vault1")?;
+    let db = crate::db::get_db(env).map_err(|e| worker::Error::RustError(e.to_string()))?;
     let now = now_string();
 
     let expired = SendDB::find_expired(&db)
@@ -227,7 +235,7 @@ pub async fn purge_expired_sends(env: &Env) -> Result<u32, worker::Error> {
 }
 
 pub async fn purge_expired_auth_requests(env: &Env) -> Result<u32, worker::Error> {
-    let db: D1Database = env.d1("vault1")?;
+    let db = crate::db::get_db(env).map_err(|e| worker::Error::RustError(e.to_string()))?;
     let cutoff = (Utc::now() - Duration::minutes(AUTH_REQUEST_RETENTION_MINUTES))
         .format("%Y-%m-%dT%H:%M:%S%.3fZ")
         .to_string();
@@ -250,7 +258,7 @@ pub async fn purge_expired_auth_requests(env: &Env) -> Result<u32, worker::Error
 }
 
 pub async fn purge_stale_pending_sends(env: &Env) -> Result<u32, worker::Error> {
-    let db: D1Database = env.d1("vault1")?;
+    let db = crate::db::get_db(env).map_err(|e| worker::Error::RustError(e.to_string()))?;
     let cutoff = (Utc::now() - chrono::Duration::days(1))
         .format("%Y-%m-%dT%H:%M:%S%.3fZ")
         .to_string();

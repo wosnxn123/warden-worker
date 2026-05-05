@@ -2,8 +2,8 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
-use worker::{query, D1Database};
 
+use crate::d1_query;
 use crate::handlers::attachments::NumberOrString;
 use crate::models::attachment::display_size;
 use crate::{db, error::AppError};
@@ -283,8 +283,8 @@ impl SendDB {
 // ── DB operations on `sends` table ──────────────────────────────────
 
 impl SendDB {
-    pub async fn insert(&self, db: &D1Database) -> Result<(), AppError> {
-        query!(
+    pub async fn insert(&self, db: &crate::db::Db) -> Result<(), AppError> {
+        d1_query!(
             db,
             "INSERT INTO sends (id, user_id, name, notes, type, data, akey, password_hash, password_salt, password_iter, max_access_count, access_count, created_at, updated_at, expiration_date, deletion_date, disabled, hide_email) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
             self.id,
@@ -312,9 +312,9 @@ impl SendDB {
         Ok(())
     }
 
-    pub async fn update(&mut self, db: &D1Database) -> Result<(), AppError> {
+    pub async fn update(&mut self, db: &crate::db::Db) -> Result<(), AppError> {
         self.updated_at = db::now_string();
-        query!(
+        d1_query!(
             db,
             "UPDATE sends SET name = ?1, notes = ?2, data = ?3, akey = ?4, password_hash = ?5, password_salt = ?6, password_iter = ?7, max_access_count = ?8, expiration_date = ?9, deletion_date = ?10, disabled = ?11, hide_email = ?12, updated_at = ?13 WHERE id = ?14 AND user_id = ?15",
             self.name,
@@ -339,8 +339,8 @@ impl SendDB {
         Ok(())
     }
 
-    pub async fn delete(&self, db: &D1Database) -> Result<(), AppError> {
-        query!(
+    pub async fn delete(&self, db: &crate::db::Db) -> Result<(), AppError> {
+        d1_query!(
             db,
             "DELETE FROM sends WHERE id = ?1 AND user_id = ?2",
             self.id,
@@ -352,10 +352,10 @@ impl SendDB {
         Ok(())
     }
 
-    pub async fn increment_access_count(&mut self, db: &D1Database) -> Result<(), AppError> {
+    pub async fn increment_access_count(&mut self, db: &crate::db::Db) -> Result<(), AppError> {
         self.access_count += 1;
         self.updated_at = db::now_string();
-        query!(
+        d1_query!(
             db,
             "UPDATE sends SET access_count = ?1, updated_at = ?2 WHERE id = ?3",
             self.access_count,
@@ -370,7 +370,7 @@ impl SendDB {
 
     // ── Finders (sends table) ───────────────────────────────────────
 
-    pub async fn find_by_id(db: &D1Database, id: &str) -> Result<Option<Self>, AppError> {
+    pub async fn find_by_id(db: &crate::db::Db, id: &str) -> Result<Option<Self>, AppError> {
         db.prepare("SELECT * FROM sends WHERE id = ?1")
             .bind(&[id.into()])?
             .first(None)
@@ -379,7 +379,7 @@ impl SendDB {
     }
 
     pub async fn find_by_id_and_user(
-        db: &D1Database,
+        db: &crate::db::Db,
         id: &str,
         user_id: &str,
     ) -> Result<Option<Self>, AppError> {
@@ -391,7 +391,7 @@ impl SendDB {
     }
 
     pub async fn find_by_access_id(
-        db: &D1Database,
+        db: &crate::db::Db,
         access_id: &str,
     ) -> Result<Option<Self>, AppError> {
         let Ok(uuid) = uuid_from_access_id(access_id) else {
@@ -400,7 +400,7 @@ impl SendDB {
         Self::find_by_id(db, &uuid).await
     }
 
-    pub async fn find_by_user(db: &D1Database, user_id: &str) -> Result<Vec<Self>, AppError> {
+    pub async fn find_by_user(db: &crate::db::Db, user_id: &str) -> Result<Vec<Self>, AppError> {
         db.prepare("SELECT * FROM sends WHERE user_id = ?1")
             .bind(&[user_id.into()])?
             .all()
@@ -410,7 +410,7 @@ impl SendDB {
             .map_err(|_| AppError::Database)
     }
 
-    pub async fn find_expired(db: &D1Database) -> Result<Vec<Self>, AppError> {
+    pub async fn find_expired(db: &crate::db::Db) -> Result<Vec<Self>, AppError> {
         let now = db::now_string();
         db.prepare("SELECT * FROM sends WHERE deletion_date <= ?1")
             .bind(&[now.into()])?
@@ -422,7 +422,7 @@ impl SendDB {
     }
 
     /// Total file-send storage bytes used by a user (finalized + pending).
-    pub async fn file_usage_by_user(db: &D1Database, user_id: &str) -> Result<i64, AppError> {
+    pub async fn file_usage_by_user(db: &crate::db::Db, user_id: &str) -> Result<i64, AppError> {
         let pending: Option<Value> = db
             .prepare("SELECT COALESCE(SUM(CAST(json_extract(data, '$.size') AS INTEGER)), 0) as total FROM sends_pending WHERE user_id = ?1")
             .bind(&[user_id.into()])?
@@ -448,12 +448,12 @@ impl SendDB {
         Ok(pending_total + finalized_total)
     }
 
-    pub async fn delete_all_by_user(db: &D1Database, user_id: &str) -> Result<(), AppError> {
-        query!(db, "DELETE FROM sends_pending WHERE user_id = ?1", user_id)
+    pub async fn delete_all_by_user(db: &crate::db::Db, user_id: &str) -> Result<(), AppError> {
+        d1_query!(db, "DELETE FROM sends_pending WHERE user_id = ?1", user_id)
             .map_err(|_| AppError::Database)?
             .run()
             .await?;
-        query!(db, "DELETE FROM sends WHERE user_id = ?1", user_id)
+        d1_query!(db, "DELETE FROM sends WHERE user_id = ?1", user_id)
             .map_err(|_| AppError::Database)?
             .run()
             .await?;
@@ -462,7 +462,7 @@ impl SendDB {
 
     /// Collect all storage keys for a user's file sends (finalized + pending).
     pub async fn storage_keys_by_user(
-        db: &D1Database,
+        db: &crate::db::Db,
         user_id: &str,
     ) -> Result<Vec<String>, AppError> {
         let mut keys = Vec::new();
@@ -488,8 +488,8 @@ impl SendDB {
 // ── DB operations on `sends_pending` table ──────────────────────────
 
 impl SendDB {
-    pub async fn insert_pending(&self, db: &D1Database) -> Result<(), AppError> {
-        query!(
+    pub async fn insert_pending(&self, db: &crate::db::Db) -> Result<(), AppError> {
+        d1_query!(
             db,
             "INSERT INTO sends_pending (id, user_id, name, notes, type, data, akey, password_hash, password_salt, password_iter, max_access_count, access_count, created_at, updated_at, expiration_date, deletion_date, disabled, hide_email) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
             self.id,
@@ -519,13 +519,13 @@ impl SendDB {
 
     /// Promote a pending send to finalized.
     /// Uses D1 batch to atomically DELETE from `sends_pending` and INSERT into `sends`.
-    pub async fn finalize(&mut self, db: &D1Database) -> Result<(), AppError> {
+    pub async fn finalize(&mut self, db: &crate::db::Db) -> Result<(), AppError> {
         self.updated_at = db::now_string();
 
-        let delete_stmt = query!(db, "DELETE FROM sends_pending WHERE id = ?1", self.id)
+        let delete_stmt = d1_query!(db, "DELETE FROM sends_pending WHERE id = ?1", self.id)
             .map_err(|_| AppError::Database)?;
 
-        let insert_stmt = query!(
+        let insert_stmt = d1_query!(
             db,
             "INSERT INTO sends (id, user_id, name, notes, type, data, akey, password_hash, password_salt, password_iter, max_access_count, access_count, created_at, updated_at, expiration_date, deletion_date, disabled, hide_email) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
             self.id,
@@ -554,7 +554,7 @@ impl SendDB {
     }
 
     pub async fn find_pending_by_id_and_user(
-        db: &D1Database,
+        db: &crate::db::Db,
         id: &str,
         user_id: &str,
     ) -> Result<Option<Self>, AppError> {
@@ -566,7 +566,7 @@ impl SendDB {
     }
 
     pub async fn find_pending_by_user(
-        db: &D1Database,
+        db: &crate::db::Db,
         user_id: &str,
     ) -> Result<Vec<Self>, AppError> {
         db.prepare("SELECT * FROM sends_pending WHERE user_id = ?1")
@@ -578,7 +578,7 @@ impl SendDB {
             .map_err(|_| AppError::Database)
     }
 
-    pub async fn find_stale_pending(db: &D1Database, cutoff: &str) -> Result<Vec<Self>, AppError> {
+    pub async fn find_stale_pending(db: &crate::db::Db, cutoff: &str) -> Result<Vec<Self>, AppError> {
         db.prepare("SELECT * FROM sends_pending WHERE created_at < ?1")
             .bind(&[cutoff.into()])?
             .all()
@@ -588,12 +588,12 @@ impl SendDB {
             .map_err(|_| AppError::Database)
     }
 
-    pub async fn delete_stale_pending(db: &D1Database, cutoff: &str) -> Result<u32, AppError> {
+    pub async fn delete_stale_pending(db: &crate::db::Db, cutoff: &str) -> Result<u32, AppError> {
         #[derive(Deserialize)]
         struct CountResult {
             count: u32,
         }
-        let result = query!(
+        let result = d1_query!(
             db,
             "SELECT COUNT(*) as count FROM sends_pending WHERE created_at < ?1",
             cutoff
@@ -605,7 +605,7 @@ impl SendDB {
         let count = result.map(|r| r.count).unwrap_or(0);
 
         if count > 0 {
-            query!(
+            d1_query!(
                 db,
                 "DELETE FROM sends_pending WHERE created_at < ?1",
                 cutoff

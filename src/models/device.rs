@@ -1,8 +1,8 @@
 use base64::{engine::general_purpose::URL_SAFE, Engine as _};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use worker::{query, D1Database};
 
+use crate::d1_query;
 use crate::{db, error::AppError};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -56,8 +56,8 @@ impl Device {
         })
     }
 
-    pub async fn list_by_user(db: &D1Database, user_id: &str) -> Result<Vec<Self>, AppError> {
-        let rows: Vec<Value> = query!(
+    pub async fn list_by_user(db: &crate::db::Db, user_id: &str) -> Result<Vec<Self>, AppError> {
+        let rows: Vec<Value> = d1_query!(
             db,
             "SELECT * FROM devices WHERE user_id = ?1 ORDER BY updated_at DESC, created_at DESC",
             user_id
@@ -75,11 +75,11 @@ impl Device {
     }
 
     pub async fn find_by_identifier_and_user(
-        db: &D1Database,
+        db: &crate::db::Db,
         identifier: &str,
         user_id: &str,
     ) -> Result<Option<Self>, AppError> {
-        let row: Option<Value> = query!(
+        let row: Option<Value> = d1_query!(
             db,
             "SELECT * FROM devices WHERE identifier = ?1 AND user_id = ?2",
             identifier,
@@ -95,10 +95,10 @@ impl Device {
     }
 
     pub async fn find_by_refresh_token(
-        db: &D1Database,
+        db: &crate::db::Db,
         refresh_token: &str,
     ) -> Result<Option<Self>, AppError> {
-        let row: Option<Value> = query!(
+        let row: Option<Value> = d1_query!(
             db,
             "SELECT * FROM devices WHERE refresh_token = ?1",
             refresh_token
@@ -119,8 +119,8 @@ impl Device {
         )
     }
 
-    pub async fn insert(&self, db: &D1Database) -> Result<(), AppError> {
-        query!(
+    pub async fn insert(&self, db: &crate::db::Db) -> Result<(), AppError> {
+        d1_query!(
             db,
             "INSERT INTO devices (identifier, user_id, name, type, push_uuid, push_token, refresh_token, twofactor_remember, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
@@ -144,7 +144,7 @@ impl Device {
     }
 
     pub async fn get_or_create(
-        db: &D1Database,
+        db: &crate::db::Db,
         identifier: String,
         user_id: String,
         name: String,
@@ -155,7 +155,7 @@ impl Device {
         {
             if device.name != name || device.r#type != r#type {
                 let now = db::now_string();
-                query!(
+                d1_query!(
                     db,
                     "UPDATE devices SET name = ?1, type = ?2, updated_at = ?3 WHERE identifier = ?4 AND user_id = ?5",
                     &name,
@@ -181,9 +181,9 @@ impl Device {
         Ok(device)
     }
 
-    pub async fn touch(&mut self, db: &D1Database) -> Result<(), AppError> {
+    pub async fn touch(&mut self, db: &crate::db::Db) -> Result<(), AppError> {
         let now = db::now_string();
-        query!(
+        d1_query!(
             db,
             "UPDATE devices SET updated_at = ?1 WHERE identifier = ?2 AND user_id = ?3",
             &now,
@@ -200,11 +200,11 @@ impl Device {
 
     pub async fn set_push_token(
         &mut self,
-        db: &D1Database,
+        db: &crate::db::Db,
         push_token: Option<&str>,
     ) -> Result<(), AppError> {
         let now = db::now_string();
-        query!(
+        d1_query!(
             db,
             "UPDATE devices SET push_token = ?1, updated_at = ?2 WHERE identifier = ?3 AND user_id = ?4",
             push_token,
@@ -222,9 +222,9 @@ impl Device {
         Ok(())
     }
 
-    pub async fn persist_push_uuid(&mut self, db: &D1Database) -> Result<(), AppError> {
+    pub async fn persist_push_uuid(&mut self, db: &crate::db::Db) -> Result<(), AppError> {
         let now = db::now_string();
-        query!(
+        d1_query!(
             db,
             "UPDATE devices SET push_uuid = ?1, updated_at = ?2 WHERE identifier = ?3 AND user_id = ?4",
             self.push_uuid.as_deref(),
@@ -243,11 +243,11 @@ impl Device {
 
     pub async fn set_twofactor_remember(
         &mut self,
-        db: &D1Database,
+        db: &crate::db::Db,
         twofactor_remember: Option<&str>,
     ) -> Result<(), AppError> {
         let now = db::now_string();
-        query!(
+        d1_query!(
             db,
             "UPDATE devices SET twofactor_remember = ?1, updated_at = ?2 WHERE identifier = ?3 AND user_id = ?4",
             twofactor_remember,
@@ -267,8 +267,8 @@ impl Device {
 
     /// Delete all device rows for a user, effectively revoking all refresh tokens and
     /// logging out every active session.
-    pub async fn delete_all_by_user(db: &D1Database, user_id: &str) -> Result<(), AppError> {
-        query!(db, "DELETE FROM devices WHERE user_id = ?1", user_id)
+    pub async fn delete_all_by_user(db: &crate::db::Db, user_id: &str) -> Result<(), AppError> {
+        d1_query!(db, "DELETE FROM devices WHERE user_id = ?1", user_id)
             .map_err(|_| AppError::Database)?
             .run()
             .await

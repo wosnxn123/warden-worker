@@ -6,8 +6,9 @@ use jwt_compact::{alg::Hs256Key, Claims as JwtClaims, Header, UntrustedToken};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 use std::sync::Arc;
-use worker::{query, Env};
+use worker::Env;
 
+use crate::d1_query;
 use crate::{
     auth::{jwt_time_options, Claims},
     client_context::{parse_required_device_type, request_ip_from_headers},
@@ -220,7 +221,7 @@ fn parse_password_device_request(payload: &TokenRequest) -> Result<DeviceAuthReq
 }
 
 async fn authenticate_password_grant(
-    db: &worker::D1Database,
+    db: &crate::db::Db,
     headers: &HeaderMap,
     payload: &TokenRequest,
     username: &str,
@@ -275,7 +276,7 @@ async fn authenticate_password_grant(
     })
 }
 
-async fn load_user_by_id(db: &worker::D1Database, user_id: &str) -> Result<User, AppError> {
+async fn load_user_by_id(db: &crate::db::Db, user_id: &str) -> Result<User, AppError> {
     let user_value: Option<Value> = db
         .prepare("SELECT * FROM users WHERE id = ?1")
         .bind(&[user_id.into()])?
@@ -288,7 +289,7 @@ async fn load_user_by_id(db: &worker::D1Database, user_id: &str) -> Result<User,
 }
 
 async fn maybe_upgrade_password_hash(
-    db: &worker::D1Database,
+    db: &crate::db::Db,
     env: &Env,
     user: User,
     password_hash: &str,
@@ -306,7 +307,7 @@ async fn maybe_upgrade_password_hash(
         hash_password_for_storage(password_hash, &new_salt, desired_iterations as u32).await?;
     let now = db::now_string();
 
-    query!(
+    d1_query!(
         db,
         "UPDATE users SET master_password_hash = ?1, password_salt = ?2, password_iterations = ?3, updated_at = ?4 WHERE id = ?5",
         &new_hash,
@@ -562,7 +563,7 @@ pub async fn token(
                             validate_totp(twofactor_code, &tf.data, tf.last_used, allow_drift)
                                 .await?;
 
-                        query!(
+                        d1_query!(
                             &db,
                             "UPDATE twofactor SET last_used = ?1 WHERE uuid = ?2",
                             new_last_used,
@@ -593,12 +594,12 @@ pub async fn token(
                                 ));
                             }
 
-                            query!(&db, "DELETE FROM twofactor WHERE user_uuid = ?1", &user.id)
+                            d1_query!(&db, "DELETE FROM twofactor WHERE user_uuid = ?1", &user.id)
                                 .map_err(|_| AppError::Database)?
                                 .run()
                                 .await
                                 .map_err(|_| AppError::Database)?;
-                            query!(
+                            d1_query!(
                                 &db,
                                 "UPDATE users SET totp_recover = NULL WHERE id = ?1",
                                 &user.id
@@ -607,7 +608,7 @@ pub async fn token(
                             .run()
                             .await
                             .map_err(|_| AppError::Database)?;
-                            query!(
+                            d1_query!(
                                 &db,
                                 "UPDATE devices SET twofactor_remember = NULL WHERE user_id = ?1",
                                 &user.id

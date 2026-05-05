@@ -34,7 +34,7 @@ fn decode_base64url_email(encoded: &str) -> Result<String, AppError> {
 }
 
 async fn current_device(
-    db: &worker::D1Database,
+    db: &crate::db::Db,
     claims: &Claims,
     path_device_id: &str,
 ) -> Result<Device, AppError> {

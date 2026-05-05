@@ -1,8 +1,8 @@
 use constant_time_eq::constant_time_eq;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use worker::{query, D1Database};
 
+use crate::d1_query;
 use crate::{crypto::verify_password, error::AppError};
 
 fn default_json_array_string() -> String {
@@ -61,8 +61,8 @@ impl PasswordVerification {
 }
 
 impl User {
-    pub async fn find_by_email(db: &D1Database, email: &str) -> Result<Option<Self>, AppError> {
-        let row: Option<Value> = query!(db, "SELECT * FROM users WHERE email = ?1", email)
+    pub async fn find_by_email(db: &crate::db::Db, email: &str) -> Result<Option<Self>, AppError> {
+        let row: Option<Value> = d1_query!(db, "SELECT * FROM users WHERE email = ?1", email)
             .map_err(|_| AppError::Database)?
             .first(None)
             .await

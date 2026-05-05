@@ -114,7 +114,7 @@ pub(crate) fn sync_response_prealloc_bytes(env: &worker::Env) -> Option<usize> {
 
 /// Whether the user has 2FA enabled.
 pub(crate) async fn two_factor_enabled(
-    db: &worker::D1Database,
+    db: &crate::db::Db,
     user_id: &str,
 ) -> Result<bool, crate::error::AppError> {
     let twofactors = crate::handlers::twofactor::list_user_twofactors(db, user_id).await?;

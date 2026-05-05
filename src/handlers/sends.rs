@@ -10,7 +10,9 @@ use jwt_compact::AlgorithmExt;
 use jwt_compact::{alg::Hs256Key, Claims as JwtClaims, Header};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use worker::{D1Database, Env};
+use worker::Env;
+
+use crate::d1_query;
 
 use crate::{
     auth::{Claims, JWT_VALIDATION_LEEWAY_SECS},
@@ -209,7 +211,7 @@ fn apply_update(
     Ok(())
 }
 
-async fn resolve_creator_identifier(db: &D1Database, send: &SendDB) -> Option<String> {
+async fn resolve_creator_identifier(db: &crate::db::Db, send: &SendDB) -> Option<String> {
     if send.hide_email != 0 {
         return None;
     }
@@ -798,7 +800,7 @@ pub async fn access_file_send(
 // ── Key rotation support ────────────────────────────────────────────
 
 pub async fn rotate_user_sends(
-    db: &D1Database,
+    db: &crate::db::Db,
     _env: &Env,
     user_id: &str,
     sends: &[SendRequestData],
@@ -833,7 +835,7 @@ pub async fn rotate_user_sends(
             continue;
         };
 
-        let stmt = worker::query!(
+        let stmt = d1_query!(
             db,
             "UPDATE sends SET name = ?1, notes = ?2, data = ?3, akey = ?4, updated_at = ?5 WHERE id = ?6 AND user_id = ?7",
             send_data.name,
@@ -854,7 +856,7 @@ pub async fn rotate_user_sends(
 
 // ── Cleanup helpers ─────────────────────────────────────────────────
 
-pub async fn delete_user_sends(db: &D1Database, env: &Env, user_id: &str) -> Result<(), AppError> {
+pub async fn delete_user_sends(db: &crate::db::Db, env: &Env, user_id: &str) -> Result<(), AppError> {
     if attachments_enabled(env) {
         let keys = SendDB::storage_keys_by_user(db, user_id).await?;
         if !keys.is_empty() {
@@ -870,7 +872,7 @@ pub async fn delete_user_sends(db: &D1Database, env: &Env, user_id: &str) -> Res
 
 pub async fn append_sends_json_array(
     out: &mut String,
-    db: &D1Database,
+    db: &crate::db::Db,
     user_id: &str,
 ) -> Result<(), AppError> {
     let sends = SendDB::find_by_user(db, user_id).await?;

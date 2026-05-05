@@ -3,7 +3,9 @@ use log::warn;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
-use worker::{query, Env};
+use worker::Env;
+
+use crate::d1_query;
 
 use crate::handlers::ciphers::RawJson;
 use crate::{
@@ -20,7 +22,7 @@ use crate::{
 ///
 /// This keeps the Worker from parsing the large upstream dataset.
 pub(crate) async fn global_equivalent_domains_json(
-    db: &worker::D1Database,
+    db: &crate::db::Db,
     excluded_globals_json: &str,
     include_excluded: bool,
 ) -> String {
@@ -61,7 +63,7 @@ SELECT COALESCE(
 "#
     };
 
-    async fn run_once(db: &worker::D1Database, sql: &str, excluded: &str) -> Result<String, ()> {
+    async fn run_once(db: &crate::db::Db, sql: &str, excluded: &str) -> Result<String, ()> {
         let row: Option<Value> = db
             .prepare(sql)
             .bind(&[excluded.to_string().into()])
@@ -175,7 +177,7 @@ pub async fn post_domains(
         .map_err(|_| AppError::BadRequest("Invalid equivalent domains".to_string()))?;
 
     let now = db::now_string();
-    query!(
+    d1_query!(
         &db,
         "UPDATE users SET equivalent_domains = ?1, excluded_globals = ?2, updated_at = ?3 WHERE id = ?4",
         equivalent_domains_json,

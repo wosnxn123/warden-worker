@@ -292,7 +292,7 @@ async fn post_to_relay(
 // ── D1 queries (push device checks) ────────────────────────────
 
 pub async fn user_has_push_device(env: &Env, user_id: &str) -> Result<bool, AppError> {
-    let db = db::get_db(env)?;
+    let db = db::get_db_unconstrained(env)?;
     let count: Option<f64> = db
         .prepare(
             "SELECT COUNT(*) as cnt FROM devices WHERE user_id = ?1 AND push_token IS NOT NULL AND push_uuid IS NOT NULL",
@@ -310,7 +310,7 @@ pub async fn lookup_device_push_info(
     user_id: &str,
     device_identifier: &str,
 ) -> Result<Option<DevicePushInfo>, AppError> {
-    let db = db::get_db(env)?;
+    let db = db::get_db_unconstrained(env)?;
     let row: Option<Value> = db
         .prepare("SELECT push_uuid, identifier FROM devices WHERE identifier = ?1 AND user_id = ?2")
         .bind(&[device_identifier.into(), user_id.into()])
@@ -328,7 +328,7 @@ pub async fn unregister_push_devices_by_user(env: &Env, user_id: &str) {
     let Some(cfg) = try_get_push_config(env) else {
         return;
     };
-    let db = match db::get_db(env) {
+    let db = match db::get_db_unconstrained(env) {
         Ok(db) => db,
         Err(_) => return,
     };

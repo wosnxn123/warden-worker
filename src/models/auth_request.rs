@@ -1,10 +1,10 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use uuid::Uuid;
-use worker::{query, D1Database};
 
 use chrono::{Duration, NaiveDateTime, Utc};
 
+use crate::d1_query;
 use crate::{crypto::ct_eq, db, error::AppError, models::device::DeviceType};
 
 pub const AUTH_REQUEST_EXPIRY_MINUTES: i64 = 5;
@@ -110,8 +110,8 @@ impl AuthRequest {
         Utc::now() >= created_utc + Duration::minutes(AUTH_REQUEST_EXPIRY_MINUTES)
     }
 
-    pub async fn insert(&self, db: &D1Database) -> Result<(), AppError> {
-        query!(
+    pub async fn insert(&self, db: &crate::db::Db) -> Result<(), AppError> {
+        d1_query!(
             db,
             "INSERT INTO auth_requests (id, user_id, request_device_identifier, device_type, request_ip, response_device_id, access_code, public_key, enc_key, master_password_hash, approved, creation_date, response_date, authentication_date)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
@@ -141,8 +141,8 @@ impl AuthRequest {
     // Only update fields that change after creation (approval/response).
     // Immutable fields (user_id, request_device_identifier, device_type, request_ip,
     // access_code, public_key, creation_date) are excluded.
-    pub async fn update(&self, db: &D1Database) -> Result<(), AppError> {
-        query!(
+    pub async fn update(&self, db: &crate::db::Db) -> Result<(), AppError> {
+        d1_query!(
             db,
             "UPDATE auth_requests
              SET response_device_id = ?1,
@@ -168,8 +168,8 @@ impl AuthRequest {
         Ok(())
     }
 
-    pub async fn delete(&self, db: &D1Database) -> Result<(), AppError> {
-        query!(db, "DELETE FROM auth_requests WHERE id = ?1", &self.id)
+    pub async fn delete(&self, db: &crate::db::Db) -> Result<(), AppError> {
+        d1_query!(db, "DELETE FROM auth_requests WHERE id = ?1", &self.id)
             .map_err(|_| AppError::Database)?
             .run()
             .await
@@ -178,8 +178,8 @@ impl AuthRequest {
         Ok(())
     }
 
-    pub async fn find_by_id(db: &D1Database, id: &str) -> Result<Option<Self>, AppError> {
-        let row: Option<Value> = query!(db, "SELECT * FROM auth_requests WHERE id = ?1", id)
+    pub async fn find_by_id(db: &crate::db::Db, id: &str) -> Result<Option<Self>, AppError> {
+        let row: Option<Value> = d1_query!(db, "SELECT * FROM auth_requests WHERE id = ?1", id)
             .map_err(|_| AppError::Database)?
             .first(None)
             .await
@@ -190,11 +190,11 @@ impl AuthRequest {
     }
 
     pub async fn find_by_id_and_user(
-        db: &D1Database,
+        db: &crate::db::Db,
         id: &str,
         user_id: &str,
     ) -> Result<Option<Self>, AppError> {
-        let row: Option<Value> = query!(
+        let row: Option<Value> = d1_query!(
             db,
             "SELECT * FROM auth_requests WHERE id = ?1 AND user_id = ?2",
             id,
@@ -210,14 +210,14 @@ impl AuthRequest {
     }
 
     pub async fn list_pending_by_user(
-        db: &D1Database,
+        db: &crate::db::Db,
         user_id: &str,
     ) -> Result<Vec<Self>, AppError> {
         let cutoff = (Utc::now() - Duration::minutes(AUTH_REQUEST_EXPIRY_MINUTES))
             .format("%Y-%m-%dT%H:%M:%S%.3fZ")
             .to_string();
 
-        let rows: Vec<Value> = query!(
+        let rows: Vec<Value> = d1_query!(
             db,
             "SELECT * FROM auth_requests
              WHERE user_id = ?1 AND approved IS NULL AND creation_date > ?2
@@ -237,8 +237,8 @@ impl AuthRequest {
             .collect()
     }
 
-    pub async fn delete_created_before(db: &D1Database, cutoff: &str) -> Result<u32, AppError> {
-        let result = query!(
+    pub async fn delete_created_before(db: &crate::db::Db, cutoff: &str) -> Result<u32, AppError> {
+        let result = d1_query!(
             db,
             "DELETE FROM auth_requests WHERE creation_date < ?1",
             cutoff

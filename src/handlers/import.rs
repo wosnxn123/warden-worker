@@ -2,7 +2,9 @@ use axum::{extract::State, Json};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use uuid::Uuid;
-use worker::{query, D1PreparedStatement, Env};
+use worker::{D1PreparedStatement, Env};
+
+use crate::d1_query;
 
 use crate::auth::Claims;
 use crate::db::{self, touch_user_updated_at};
@@ -27,7 +29,7 @@ pub async fn import_data(
     let batch_size = get_batch_size(&env);
 
     // Get existing folders for this user
-    let existing_folder_rows = query!(
+    let existing_folder_rows = d1_query!(
         &db,
         "SELECT id FROM folders WHERE user_id = ?1",
         &claims.sub
@@ -59,7 +61,7 @@ pub async fn import_data(
                     updated_at: now.clone(),
                 };
 
-                let stmt = query!(
+                let stmt = d1_query!(
                     &db,
                     "INSERT INTO folders (id, user_id, name, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)",
                     folder.id,
@@ -84,7 +86,7 @@ pub async fn import_data(
                 updated_at: now.clone(),
             };
 
-            let stmt = query!(
+            let stmt = d1_query!(
                 &db,
                 "INSERT INTO folders (id, user_id, name, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)",
                 folder.id,
@@ -154,7 +156,7 @@ pub async fn import_data(
 
         let data = serde_json::to_string(&cipher.data).map_err(|_| AppError::Internal)?;
 
-        let stmt = query!(
+        let stmt = d1_query!(
             &db,
             "INSERT INTO ciphers (id, user_id, organization_id, type, data, favorite, folder_id, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
