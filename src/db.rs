@@ -1,5 +1,5 @@
-use crate::error::AppError;
 use crate::d1_query;
+use crate::error::AppError;
 use chrono::Utc;
 use worker::{D1Database, D1DatabaseSession, D1PreparedStatement, D1Result, Env, Error};
 
@@ -51,9 +51,7 @@ pub fn get_db(env: &Env) -> Result<Db, AppError> {
 /// Suitable when there is no preceding write that must be immediately visible.
 pub fn get_db_unconstrained(env: &Env) -> Result<Db, AppError> {
     let raw = env.d1("vault1").map_err(AppError::Worker)?;
-    let session = raw
-        .with_session(None)
-        .map_err(AppError::Worker)?;
+    let session = raw.with_session(None).map_err(AppError::Worker)?;
     Ok(Db::Session(session))
 }
 

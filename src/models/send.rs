@@ -578,7 +578,10 @@ impl SendDB {
             .map_err(|_| AppError::Database)
     }
 
-    pub async fn find_stale_pending(db: &crate::db::Db, cutoff: &str) -> Result<Vec<Self>, AppError> {
+    pub async fn find_stale_pending(
+        db: &crate::db::Db,
+        cutoff: &str,
+    ) -> Result<Vec<Self>, AppError> {
         db.prepare("SELECT * FROM sends_pending WHERE created_at < ?1")
             .bind(&[cutoff.into()])?
             .all()

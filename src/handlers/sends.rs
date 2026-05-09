@@ -856,7 +856,11 @@ pub async fn rotate_user_sends(
 
 // ── Cleanup helpers ─────────────────────────────────────────────────
 
-pub async fn delete_user_sends(db: &crate::db::Db, env: &Env, user_id: &str) -> Result<(), AppError> {
+pub async fn delete_user_sends(
+    db: &crate::db::Db,
+    env: &Env,
+    user_id: &str,
+) -> Result<(), AppError> {
     if attachments_enabled(env) {
         let keys = SendDB::storage_keys_by_user(db, user_id).await?;
         if !keys.is_empty() {

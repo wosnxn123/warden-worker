@@ -430,10 +430,7 @@ async fn generate_recovery_code_for_user(
 }
 
 /// Clear recovery code when no real 2FA providers remain.
-async fn clear_recovery_if_no_twofactor(
-    db: &crate::db::Db,
-    user_id: &str,
-) -> Result<(), AppError> {
+async fn clear_recovery_if_no_twofactor(db: &crate::db::Db, user_id: &str) -> Result<(), AppError> {
     let remaining: Vec<TwoFactor> = db
         .prepare("SELECT * FROM twofactor WHERE user_uuid = ?1 AND atype < 1000 AND atype != ?2")
         .bind(&[
