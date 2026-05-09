@@ -126,11 +126,11 @@ pub async fn import_data(
             .get(&index)
             .and_then(|folder_idx| folders.get(*folder_idx).cloned());
 
-        let cipher_data = CipherData {
-            name: import_cipher.name,
-            notes: import_cipher.notes,
-            type_fields: import_cipher.type_fields,
-        };
+        let cipher_data = CipherData::new(
+            import_cipher.name,
+            import_cipher.notes,
+            import_cipher.type_fields,
+        );
 
         let data_value = serde_json::to_value(&cipher_data).map_err(|_| AppError::Internal)?;
 

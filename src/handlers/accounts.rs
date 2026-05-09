@@ -725,7 +725,7 @@ pub async fn post_rotatekey(
     let personal_ciphers: Vec<_> = payload
         .account_data
         .ciphers
-        .iter()
+        .into_iter()
         .filter(|c| c.organization_id.is_none())
         .collect();
 
@@ -860,11 +860,7 @@ pub async fn post_rotatekey(
         // id is guaranteed to exist (validated above)
         let cipher_id = cipher.id.as_ref().unwrap();
 
-        let cipher_data = CipherData {
-            name: cipher.name.clone(),
-            notes: cipher.notes.clone(),
-            type_fields: cipher.type_fields.clone(),
-        };
+        let cipher_data = CipherData::new(cipher.name, cipher.notes, cipher.type_fields);
 
         let data = serde_json::to_string(&cipher_data).map_err(|_| AppError::Internal)?;
 

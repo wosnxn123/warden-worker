@@ -56,11 +56,11 @@ pub async fn create_cipher(
     let now = db::now_string();
     let cipher_data_req = payload.cipher;
 
-    let cipher_data = CipherData {
-        name: cipher_data_req.name,
-        notes: cipher_data_req.notes,
-        type_fields: cipher_data_req.type_fields,
-    };
+    let cipher_data = CipherData::new(
+        cipher_data_req.name,
+        cipher_data_req.notes,
+        cipher_data_req.type_fields,
+    );
 
     let data_value = serde_json::to_value(&cipher_data).map_err(|_| AppError::Internal)?;
 
@@ -173,24 +173,18 @@ pub async fn update_cipher(
         }
     }
 
-    let cipher_data_req = payload;
-
-    let cipher_data = CipherData {
-        name: cipher_data_req.name,
-        notes: cipher_data_req.notes,
-        type_fields: cipher_data_req.type_fields,
-    };
+    let cipher_data = CipherData::new(payload.name, payload.notes, payload.type_fields);
 
     let data_value = serde_json::to_value(&cipher_data).map_err(|_| AppError::Internal)?;
 
     let mut cipher = Cipher {
         id: id.clone(),
         user_id: Some(claims.sub.clone()),
-        organization_id: cipher_data_req.organization_id.clone(),
-        r#type: cipher_data_req.r#type,
+        organization_id: payload.organization_id.clone(),
+        r#type: payload.r#type,
         data: data_value,
-        favorite: cipher_data_req.favorite.unwrap_or(false),
-        folder_id: cipher_data_req.folder_id.clone(),
+        favorite: payload.favorite.unwrap_or(false),
+        folder_id: payload.folder_id.clone(),
         deleted_at: None,
         archived_at: existing_cipher.archived_at,
         created_at: existing_cipher.created_at,
@@ -220,7 +214,7 @@ pub async fn update_cipher(
     .run()
     .await?;
 
-    if let Some(attachments2) = &cipher_data_req.attachments2 {
+    if let Some(attachments2) = &payload.attachments2 {
         for (attachment_id, attachment) in attachments2 {
             let result = d1_query!(
                 &db,
@@ -800,11 +794,7 @@ pub async fn create_cipher_simple(
 ) -> Result<Json<Cipher>, AppError> {
     let db = db::get_db(&env)?;
     let now = db::now_string();
-    let cipher_data = CipherData {
-        name: payload.name,
-        notes: payload.notes,
-        type_fields: payload.type_fields,
-    };
+    let cipher_data = CipherData::new(payload.name, payload.notes, payload.type_fields);
 
     let data_value = serde_json::to_value(&cipher_data).map_err(|_| AppError::Internal)?;
 

@@ -51,6 +51,43 @@ pub struct CipherData {
     pub type_fields: CipherTypeFields,
 }
 
+impl CipherTypeFields {
+    fn normalize_for_storage(mut self) -> Self {
+        self.password_history = {
+            match self.password_history {
+                Some(Value::Array(entries)) => Some(Value::Array(
+                    entries
+                        .into_iter()
+                        .filter_map(normalize_password_history_entry)
+                        .collect(),
+                )),
+                Some(_) => Some(Value::Array(Vec::new())),
+                None => None,
+            }
+        };
+        self
+    }
+}
+
+impl CipherData {
+    pub fn new(name: String, notes: Option<String>, type_fields: CipherTypeFields) -> Self {
+        Self {
+            name,
+            notes,
+            type_fields: type_fields.normalize_for_storage(),
+        }
+    }
+}
+
+fn normalize_password_history_entry(entry: Value) -> Option<Value> {
+    match entry {
+        Value::Object(map) if matches!(map.get("password"), Some(Value::String(_))) => {
+            Some(Value::Object(map))
+        }
+        _ => None,
+    }
+}
+
 // Custom deserialization function for booleans
 fn deserialize_bool_from_int<'de, D>(deserializer: D) -> Result<bool, D::Error>
 where
