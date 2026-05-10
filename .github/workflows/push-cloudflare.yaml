@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       # Pin tool versions to avoid upstream updates breaking CI
-      WORKER_BUILD_VERSION: "0.8.1"
+      WORKER_BUILD_VERSION: "0.8.3"
       WRANGLER_VERSION: "4.82.1"
       # Web Vault frontend (bw_web_builds) version tag (default pinned; override via GitHub Actions Variables)
       # - Set repository variable BW_WEB_VERSION (e.g. v2026.4.1) to override
