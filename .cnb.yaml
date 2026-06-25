@@ -1,0 +1,7 @@
+$:
+  vscode:
+    - runner:
+        tags: cnb:arch:amd64
+        cpus: 32
+      services:
+        - vscode
