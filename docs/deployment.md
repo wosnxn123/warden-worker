@@ -1,5 +1,8 @@
 # Deployment
 
+> [!NOTE]
+> 📖 中文文档请见 [deployment.zh-CN.md](deployment.zh-CN.md) / Chinese documentation: [deployment.zh-CN.md](deployment.zh-CN.md)
+
 This page covers the two deployment paths. Pick the one that fits your workflow and infrastructure.
 
 ## CLI Deployment
@@ -107,6 +110,17 @@ This page covers the two deployment paths. Pick the one that fits your workflow 
      `PUSH_INSTALLATION_ID`, `PUSH_INSTALLATION_KEY` as secret variables.  
      See [Mobile Push Notifications](../README.md#mobile-push-notifications-optional) for more details.
 
+   **Optional feature settings (see [README](../README.md) for details):**
+
+   - **Admin panel:** `ADMIN_TOKEN` (secret) — enables the `/admin` dashboard
+   - **SSO (OIDC):** `SSO_ENABLED=true`, `SSO_AUTHORITY`, `SSO_CLIENT_ID` (vars), `SSO_CLIENT_SECRET` (secret). For multi-tenant: `SSO_TENANTS` (JSON array var)
+   - **Key Connector:** `KEY_CONNECTOR_ENABLED=true`, `KEY_CONNECTOR_URL` (vars)
+   - **Microsoft Graph (email + OneDrive storage):** `MSGRAPH_TENANT_ID`, `MSGRAPH_CLIENT_ID`, `MSGRAPH_USER` (vars), `MSGRAPH_CLIENT_SECRET` (secret). Set `MAIL_PROVIDER=msgraph` for email
+   - **Email (alternative):** `MAIL_PROVIDER=resend` + `RESEND_API_KEY` (secret) + `MAIL_FROM` (var), or `MAIL_PROVIDER=webhook` + `MAIL_WEBHOOK_URL` (var)
+   - **Yubikey 2FA:** `YUBICO_CLIENT_ID` (var), `YUBICO_SECRET_KEY` (secret)
+   - **Duo 2FA:** `DUO_IKEY`, `DUO_HOST` (vars), `DUO_SKEY` (secret)
+   - **WebAuthn (passkey):** no configuration needed (pure-Rust, WASM-compatible)
+
 8. **Configure your Bitwarden client:**
 
    In your Bitwarden client, go to the self-hosted login screen and enter the URL of your deployed worker.
@@ -203,6 +217,8 @@ If you skip seeding, `/api/settings/domains` and `/api/sync` will return `global
    - Optional mobile push settings:
      `PUSH_ENABLED=true`, `PUSH_RELAY_URI`, `PUSH_IDENTITY_URI`, `PUSH_INSTALLATION_ID`, `PUSH_INSTALLATION_KEY`.  
      See [Mobile Push Notifications](../README.md#mobile-push-notifications-optional) for more details.
+   - Optional advanced features (see [README](../README.md) for full details):
+     `ADMIN_TOKEN`, `SSO_*`, `KEY_CONNECTOR_*`, `MSGRAPH_*`, `MAIL_*`, `YUBICO_*`, `DUO_*`
 
 
 > [!IMPORTANT]

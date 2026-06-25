@@ -1,5 +1,8 @@
 # Database Backup, Restore, and Time Travel
 
+> [!NOTE]
+> 📖 中文文档请见 [db-backup-recovery.zh-CN.md](db-backup-recovery.zh-CN.md) / Chinese documentation: [db-backup-recovery.zh-CN.md](db-backup-recovery.zh-CN.md)
+
 Centralize your D1 operational playbooks here: backup automation, restore flows, and point-in-time recovery.
 
 ## GitHub Actions Backups
