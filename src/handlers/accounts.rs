@@ -14,6 +14,7 @@ use crate::{
     db,
     error::AppError,
     handlers::{attachments, sends},
+    mail,
     models::{
         cipher::CipherData,
         device::Device,
@@ -317,12 +318,195 @@ pub async fn register(
         AppError::Database
     })?;
 
+    // Send the verification email unless REQUIRE_EMAIL_VERIFICATION is false.
+    let require_verification = env
+        .var("REQUIRE_EMAIL_VERIFICATION")
+        .map(|v| !matches!(v.to_string().as_str(), "0" | "false" | "no" | "off"))
+        .unwrap_or(true);
+
+    if require_verification {
+        let _ = send_verification_token(&env, &user.id, &user.email).await;
+    }
+
     Ok(Json(json!({})))
 }
 
+/// Generate a verification token, persist it, and email the verification link.
+async fn send_verification_token(
+    env: &Arc<Env>,
+    user_id: &str,
+    email: &str,
+) -> Result<(), AppError> {
+    let db = db::get_db(env)?;
+    // Invalidate any previous tokens for this user.
+    crate::d1_query!(
+        &db,
+        "DELETE FROM email_verification_tokens WHERE user_id = ?1",
+        user_id
+    )
+    .map_err(|_| AppError::Database)?
+    .run()
+    .await
+    .map_err(|_| AppError::Database)?;
+
+    let token = Uuid::new_v4().to_string();
+    let now = db::now_string();
+    crate::d1_query!(
+        &db,
+        "INSERT INTO email_verification_tokens (token, user_id, created_at) VALUES (?1, ?2, ?3)",
+        &token,
+        user_id,
+        &now
+    )
+    .map_err(|_| AppError::Database)?
+    .run()
+    .await
+    .map_err(|_| AppError::Database)?;
+
+    // Resolve the base URL. Prefer BASE_URL var; fall back to the Host header
+    // (passed through as x-forwarded-host by Workers).
+    let base_url = env
+        .var("BASE_URL")
+        .map(|v| v.to_string())
+        .unwrap_or_default();
+    let base_url = if base_url.is_empty() {
+        "https://warden.example.com".to_string()
+    } else {
+        base_url.trim_end_matches('/').to_string()
+    };
+
+    let link = format!("{base_url}/#/verify-email?userId={user_id}&token={token}",);
+    let subject = "Verify your Warden account";
+    let body = format!(
+        "Welcome to Warden!\n\nPlease verify your email address by clicking the link below:\n\n{link}\n\n\
+         If you did not create an account, you can safely ignore this email.\n\n— Warden"
+    );
+    mail::send(env, email, subject, &body).await
+}
+
+/// POST /identity/accounts/register/send-verification-email
+/// Also exposed at /api/accounts/send-verification-email (Bitwarden client calls
+/// the authenticated variant after login). This public variant requires the
+/// email in the body.
 #[worker::send]
-pub async fn send_verification_email() -> Result<Json<String>, AppError> {
-    Ok(Json("fixed-token-to-mock".to_string()))
+pub async fn send_verification_email(
+    State(env): State<Arc<Env>>,
+    Json(payload): Json<SendVerificationEmailRequest>,
+) -> Result<Json<Value>, AppError> {
+    let db = db::get_db(&env)?;
+    let email = payload.email.to_lowercase();
+    let user = User::find_by_email(&db, &email)
+        .await?
+        .ok_or_else(|| AppError::BadRequest("Email not registered".to_string()))?;
+
+    if user.email_verified {
+        return Err(AppError::BadRequest("Email already verified".to_string()));
+    }
+    let _ = send_verification_token(&env, &user.id, &user.email).await;
+    Ok(Json(json!({})))
+}
+
+/// Authenticated variant: POST /api/accounts/send-verification-email
+#[worker::send]
+pub async fn send_verification_email_authed(
+    State(env): State<Arc<Env>>,
+    claims: Claims,
+) -> Result<Json<Value>, AppError> {
+    let db = db::get_db(&env)?;
+    let user = User::find_by_email(&db, &claims.email)
+        .await?
+        .ok_or_else(|| AppError::NotFound("User not found".to_string()))?;
+    if user.email_verified {
+        return Err(AppError::BadRequest("Email already verified".to_string()));
+    }
+    let _ = send_verification_token(&env, &user.id, &user.email).await;
+    Ok(Json(json!({})))
+}
+
+/// POST /api/accounts/verify-email — verify a registration token.
+/// Body: { "userId": "...", "token": "..." }
+#[worker::send]
+pub async fn verify_email(
+    State(env): State<Arc<Env>>,
+    Json(payload): Json<VerifyEmailRequest>,
+) -> Result<Json<Value>, AppError> {
+    let db = db::get_db(&env)?;
+    let row: Option<Value> = crate::d1_query!(
+        &db,
+        "SELECT * FROM email_verification_tokens WHERE token = ?1 AND user_id = ?2",
+        &payload.token,
+        &payload.user_id
+    )
+    .map_err(|_| AppError::Database)?
+    .first(None)
+    .await
+    .map_err(|_| AppError::Database)?;
+
+    if row.is_none() {
+        return Err(AppError::BadRequest(
+            "Invalid or expired verification token".to_string(),
+        ));
+    }
+
+    // Tokens expire after 24h.
+    if let Some(r) = row {
+        if let Some(created) = r.get("created_at").and_then(|v| v.as_str()) {
+            if let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(created) {
+                if (chrono::Utc::now() - parsed.with_timezone(&chrono::Utc)).num_seconds() > 86400 {
+                    crate::d1_query!(
+                        &db,
+                        "DELETE FROM email_verification_tokens WHERE token = ?1",
+                        &payload.token
+                    )
+                    .map_err(|_| AppError::Database)?
+                    .run()
+                    .await
+                    .map_err(|_| AppError::Database)?;
+                    return Err(AppError::BadRequest(
+                        "Verification token expired".to_string(),
+                    ));
+                }
+            }
+        }
+    }
+
+    let now = db::now_string();
+    crate::d1_query!(
+        &db,
+        "UPDATE users SET email_verified = 1, updated_at = ?1 WHERE id = ?2",
+        &now,
+        &payload.user_id
+    )
+    .map_err(|_| AppError::Database)?
+    .run()
+    .await
+    .map_err(|_| AppError::Database)?;
+
+    crate::d1_query!(
+        &db,
+        "DELETE FROM email_verification_tokens WHERE token = ?1",
+        &payload.token
+    )
+    .map_err(|_| AppError::Database)?
+    .run()
+    .await
+    .map_err(|_| AppError::Database)?;
+
+    Ok(Json(json!({})))
+}
+
+/// Request payloads for email verification.
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SendVerificationEmailRequest {
+    pub email: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VerifyEmailRequest {
+    pub user_id: String,
+    pub token: String,
 }
 
 /// POST /api/accounts/password-hint

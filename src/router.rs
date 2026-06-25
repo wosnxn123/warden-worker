@@ -72,6 +72,12 @@ pub fn api_router(env: Env) -> Router {
             "/identity/accounts/register/send-verification-email",
             post(accounts::send_verification_email),
         )
+        // Email verification (consume token)
+        .route("/api/accounts/verify-email", post(accounts::verify_email))
+        .route(
+            "/api/accounts/send-verification-email",
+            post(accounts::send_verification_email_authed),
+        )
         // Main data sync route
         .route("/api/sync", get(sync::get_sync_data))
         // For on-demand sync checks

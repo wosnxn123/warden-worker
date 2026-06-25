@@ -537,6 +537,18 @@ pub async fn token(
                 needs_migration,
             } = authenticate_password_grant(&db, &headers, &payload, &username).await?;
 
+            // Block login when email verification is required but not completed.
+            let require_verification = env
+                .var("REQUIRE_EMAIL_VERIFICATION")
+                .map(|v| !matches!(v.to_string().as_str(), "0" | "false" | "no" | "off"))
+                .unwrap_or(true);
+            if require_verification && !user.email_verified {
+                return Err(AppError::IdentityError {
+                    error: "invalid_grant".to_string(),
+                    description: "Email not verified.".to_string(),
+                });
+            }
+
             let mut device = Device::get_or_create(
                 &db,
                 device_request.identifier,

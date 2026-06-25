@@ -180,7 +180,18 @@ Workers 无法直接发 SMTP，邮件通过 HTTP API 发送。通过 `MAIL_PROVI
 | `msgraph` | 通过 Exchange Online 发送 | 见[微软 Graph 集成](#微软-graph-集成) |
 | 不设 | 禁用（相关功能静默失效） | 无 |
 
-邮件功能用于：Email 2FA、紧急访问邀请通知、密码提示。
+邮件功能用于：Email 2FA、紧急访问邀请通知、密码提示、**注册邮箱验证**。
+
+### 注册邮箱验证
+
+默认情况下，Warden 要求用户注册后必须验证邮箱才能登录。如需关闭，设置 `REQUIRE_EMAIL_VERIFICATION=false`。
+
+开启时的流程：
+1. 用户注册 → 系统发送一封含唯一验证链接的邮件。
+2. 用户点击链接 → `POST /api/accounts/verify-email` 将 `email_verified` 置为 1。
+3. 此时方可登录。
+
+如果验证邮件丢失，可调用 `POST /identity/accounts/register/send-verification-email`（登录前，body `{email}`）或 `POST /api/accounts/send-verification-email`（登录后）重新发送。验证 token 有效期 24 小时。
 
 ### 附件存储
 

@@ -306,6 +306,15 @@ CREATE TABLE IF NOT EXISTS sso_auth (
 );
 CREATE INDEX IF NOT EXISTS idx_sso_auth_created_at ON sso_auth(created_at);
 
+-- Email verification tokens (registration + resend flows).
+CREATE TABLE IF NOT EXISTS email_verification_tokens (
+    token TEXT PRIMARY KEY NOT NULL,
+    user_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_email_verification_tokens_user ON email_verification_tokens(user_id);
+
 -- Organization API keys for SCIM and org-level API access.
 CREATE TABLE IF NOT EXISTS organization_api_keys (
     org_id TEXT NOT NULL,

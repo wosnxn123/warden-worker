@@ -72,9 +72,20 @@ All Bitwarden features are now supported.
 
 Email-dependent features (Email 2FA, emergency-access invitations, password hints) need an external mail provider since Workers cannot speak SMTP. Configure via environment variables:
 
-* `MAIL_PROVIDER`: `resend`, `webhook`, or omit to disable (features gracefully no-op)
+* `MAIL_PROVIDER`: `resend`, `webhook`, `msgraph`, or omit to disable (features gracefully no-op)
 * `RESEND_API_KEY` + `MAIL_FROM` for the Resend provider
 * `MAIL_WEBHOOK_URL` (+ optional `MAIL_FROM`) for a custom HTTP relay
+
+### Email verification on registration
+
+By default, Warden requires users to verify their email before they can log in. Set `REQUIRE_EMAIL_VERIFICATION=false` to allow immediate login without verification.
+
+When enabled:
+1. The user registers → a verification email with a unique link is sent.
+2. They click the link → `POST /api/accounts/verify-email` marks `email_verified = 1`.
+3. They can now log in.
+
+If the email is lost, call `POST /identity/accounts/register/send-verification-email` (pre-login, body `{email}`) or `POST /api/accounts/send-verification-email` (authenticated) to resend. Tokens expire after 24 hours.
 
 ### Yubikey 2FA
 
