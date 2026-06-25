@@ -148,6 +148,22 @@ pub struct OrgImportRelationship {
     pub collection_index: usize,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateGroupData {
+    pub name: String,
+    pub access_all: Option<bool>,
+    pub external_id: Option<String>,
+    #[allow(dead_code)]
+    pub users: Option<Vec<GroupUserAccess>>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GroupUserAccess {
+    pub id: String,
+}
+
 // ── Helpers ─────────────────────────────────────────────────────────
 
 async fn get_confirmed_membership(
@@ -722,7 +738,7 @@ pub async fn update_policy(
     })))
 }
 
-// ── Groups (minimal — table exists, API returns empty) ──────────────
+// ── Groups ─────────────────────────────────────────────────────────
 
 /// GET /api/organizations/{id}/groups
 #[worker::send]
@@ -733,9 +749,101 @@ pub async fn list_groups(
 ) -> Result<Json<Value>, AppError> {
     let db = db::get_db(&env)?;
     require_admin(&db, &user_id, &id).await?;
+    let rows: Vec<Value> = crate::d1_query!(
+        db,
+        "SELECT * FROM groups WHERE org_id = ?1 ORDER BY created_at ASC",
+        id
+    )
+    .map_err(|_| AppError::Database)?
+    .all()
+    .await
+    .map_err(|_| AppError::Database)?
+    .results()
+    .map_err(|_| AppError::Database)?;
+    let data: Vec<Value> = rows
+        .into_iter()
+        .map(|r| {
+            json!({
+                "id": r.get("id").and_then(|v| v.as_str()).unwrap_or(""),
+                "organizationId": r.get("org_id").and_then(|v| v.as_str()).unwrap_or(""),
+                "name": r.get("name").and_then(|v| v.as_str()).unwrap_or(""),
+                "accessAll": r.get("access_all")
+                    .and_then(|v| v.as_i64())
+                    .map(|x| x != 0)
+                    .unwrap_or(false),
+                "object": "group"
+            })
+        })
+        .collect();
     Ok(Json(
-        json!({ "data": [], "object": "list", "continuationToken": null }),
+        json!({ "data": data, "object": "list", "continuationToken": null }),
     ))
+}
+
+/// POST /api/organizations/{id}/groups
+#[worker::send]
+pub async fn create_group(
+    State(env): State<Arc<Env>>,
+    AuthUser(user_id, _): AuthUser,
+    Path(id): Path<String>,
+    Json(data): Json<CreateGroupData>,
+) -> Result<Json<Value>, AppError> {
+    let db = db::get_db(&env)?;
+    require_admin(&db, &user_id, &id).await?;
+    let now = db::now_string();
+    let gid = uuid::Uuid::new_v4().to_string();
+    crate::d1_query!(
+        db,
+        "INSERT INTO groups (id, org_id, name, access_all, external_id, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        &gid,
+        &id,
+        &data.name,
+        data.access_all.unwrap_or(false) as i32,
+        data.external_id.as_deref(),
+        &now,
+        &now
+    )
+    .map_err(|_| AppError::Database)?
+    .run()
+    .await
+    .map_err(|_| AppError::Database)?;
+
+    // Assign users to group if provided.
+    if let Some(users) = &data.users {
+        for u in users {
+            if let Ok(Some(m)) = Membership::find_by_user_and_org(&db, &u.id, &id).await {
+                crate::d1_query!(
+                    db,
+                    "INSERT OR IGNORE INTO groups_users (group_id, users_organizations_id) VALUES (?1, ?2)",
+                    &gid, &m.id
+                )
+                .map_err(|_| AppError::Database)?
+                .run()
+                .await
+                .map_err(|_| AppError::Database)?;
+            }
+        }
+    }
+
+    Ok(Json(json!({
+        "id": gid,
+        "organizationId": id,
+        "name": data.name,
+        "accessAll": data.access_all.unwrap_or(false),
+        "object": "group"
+    })))
+}
+
+/// POST /api/organizations/{id}/delete (Bitwarden uses POST, not DELETE)
+#[worker::send]
+pub async fn post_delete_organization(
+    State(env): State<Arc<Env>>,
+    AuthUser(user_id, _): AuthUser,
+    Path(id): Path<String>,
+    Json(_data): Json<Value>,
+) -> Result<Json<Value>, AppError> {
+    delete_organization(State(env), AuthUser(user_id, String::new()), Path(id)).await
 }
 
 // ── Import ──────────────────────────────────────────────────────────

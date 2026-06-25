@@ -441,7 +441,11 @@ pub fn api_router(env: Env) -> Router {
         )
         .route(
             "/api/organizations/{id}/groups",
-            get(organizations::list_groups),
+            get(organizations::list_groups).post(organizations::create_group),
+        )
+        .route(
+            "/api/organizations/{id}/delete",
+            post(organizations::post_delete_organization),
         )
         .route(
             "/api/organizations/{id}/import",

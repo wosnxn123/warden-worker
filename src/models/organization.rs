@@ -47,11 +47,52 @@ pub struct Organization {
 }
 
 impl Organization {
+    /// Full organization details (for GET /api/organizations/{id}).
+    /// Returns every field the Bitwarden client expects on the org settings page.
     pub fn to_json(&self) -> Value {
         json!({
             "id": self.id,
             "name": self.name,
             "billingEmail": self.billing_email,
+            "enabled": true,
+            "object": "organization",
+            // Keys (asymmetric keypair for org encryption)
+            "keys": {
+                "publicKey": self.public_key.as_deref().unwrap_or(""),
+                "encryptedPrivateKey": self.private_key.as_deref().unwrap_or("")
+            },
+            // Plan / license info (all features enabled for self-hosted)
+            "planType": "TeamsStarter",
+            "plan": "TeamsStarter",
+            "seats": 10,
+            "maxCollections": 0,
+            "maxStorageGb": 10,
+            // Feature flags — the client uses these to show/hide UI sections
+            "use2fa": true,
+            "useGroups": true,
+            "useDirectory": true,
+            "useEvents": true,
+            "useTotp": true,
+            "useApi": true,
+            "useSso": false,
+            "useKeyConnector": false,
+            "useScim": true,
+            "usePolicies": true,
+            "useResetPassword": true,
+            "useCustomPermissions": true,
+            "useOrganizationDomainLinking": false,
+            "businessName": null,
+            "keyConnectorEnabled": false,
+            "keyConnectorUrl": null,
+        })
+    }
+
+    /// Lightweight JSON for list endpoints.
+    #[allow(dead_code)]
+    pub fn to_summary_json(&self) -> Value {
+        json!({
+            "id": self.id,
+            "name": self.name,
             "enabled": true,
             "object": "organization"
         })
@@ -122,27 +163,26 @@ impl Membership {
             "name": org.name,
             "usePolicies": true,
             "useGroups": true,
-            "useDirectory": false,
-            "useEvents": false,
+            "useDirectory": true,
+            "useEvents": true,
             "useTotp": true,
             "use2fa": true,
             "useApi": true,
             "useSso": false,
             "useKeyConnector": false,
-            "useScim": false,
-            "useResetPassword": false,
+            "useScim": true,
+            "useResetPassword": true,
             "selfHost": false,
-            "useCustomPermissions": false,
+            "useCustomPermissions": true,
             "useOrganizationDomainLinking": false,
             "businessName": null,
             "planType": "TeamsStarter",
             "seats": 10,
             "maxCollections": 0,
-            "maxStorageGb": 1,
+            "maxStorageGb": 10,
             "keyConnectorEnabled": false,
             "keyConnectorUrl": null,
             "billingEmail": org.billing_email,
-            "enabled": true,
             "userIsOwner": self.atype == MembershipType::Owner as i32,
             "userIsAdmin": self.atype == MembershipType::Admin as i32,
             "userId": self.user_id,
