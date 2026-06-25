@@ -13,6 +13,9 @@ pub enum TwoFactorType {
     OrganizationDuo = 6,
     Webauthn = 7,
     RecoveryCode = 8,
+    // Internal challenge types (>= 1000) — not returned to clients
+    EmailVerificationChallenge = 1002,
+    WebauthnRegisterChallenge = 1003,
 }
 
 impl TwoFactorType {
@@ -121,4 +124,62 @@ pub struct DisableAuthenticatorData {
     pub otp: Option<String>,
     #[serde(rename = "type")]
     pub r#type: i32,
+}
+
+// ============================================================================
+// Yubikey 2FA
+// ============================================================================
+
+/// Stored in `twofactor.data` for Yubikey records: the registered public IDs
+/// (first 12 chars of each OTP) and the NFC flag.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct YubikeyMetadata {
+    #[serde(default)]
+    pub keys: Vec<String>,
+    #[serde(default)]
+    pub nfc: bool,
+}
+
+/// POST /api/two-factor/yubikey - Enable Yubikey
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnableYubikeyData {
+    #[serde(default)]
+    pub key1: Option<String>,
+    #[serde(default)]
+    pub key2: Option<String>,
+    #[serde(default)]
+    pub key3: Option<String>,
+    #[serde(default)]
+    pub key4: Option<String>,
+    #[serde(default)]
+    pub key5: Option<String>,
+    #[serde(default)]
+    pub nfc: bool,
+    pub master_password_hash: Option<String>,
+    pub otp: Option<String>,
+}
+
+// ============================================================================
+// Email 2FA
+// ============================================================================
+
+/// Stored in `twofactor.data` for Email records / challenges.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EmailTokenData {
+    pub email: String,
+    pub last_token: Option<String>,
+    pub token_sent: i64, // unix timestamp
+    pub attempts: i32,
+}
+
+/// POST /api/two-factor/email - Activate email 2FA (verify token)
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnableEmailData {
+    #[allow(dead_code)]
+    pub email: String,
+    pub token: String,
+    pub master_password_hash: Option<String>,
+    pub otp: Option<String>,
 }

@@ -11,7 +11,10 @@ use crate::{
         sync_response_prealloc_bytes, two_factor_enabled,
     },
     models::{
+        collection::{Collection, CollectionCipher},
         folder::{Folder, FolderResponse},
+        org_policy::OrgPolicy,
+        organization::{Membership, Organization, STATUS_CONFIRMED},
         sync::Profile,
         user::User,
     },
@@ -87,8 +90,22 @@ pub async fn get_sync_data(
     // Serialize profile and folders (small data, acceptable CPU cost)
     let mut profile = Profile::from_user(user, two_factor_enabled)?;
     // Match vaultwarden semantics: `_status` is `Invited` when no master password is set.
-    // We don't implement org invitations, but this helps clients interpret the account state.
     profile.status = if has_master_password { 0 } else { 1 };
+
+    // Organizations the user belongs to (for profile.organizations).
+    let memberships = Membership::list_by_user(&db, &user_id).await?;
+    let mut orgs_json: Vec<Value> = Vec::with_capacity(memberships.len());
+    let mut user_org_ids: Vec<String> = Vec::new();
+    for m in &memberships {
+        if m.status != STATUS_CONFIRMED {
+            continue;
+        }
+        user_org_ids.push(m.org_id.clone());
+        if let Some(org) = Organization::find_by_id(&db, &m.org_id).await? {
+            orgs_json.push(m.to_profile_json(&org));
+        }
+    }
+    profile.organizations = orgs_json;
     let profile_json = serde_json::to_string(&profile).map_err(|_| AppError::Internal)?;
     let folders_json = serde_json::to_string(&folders).map_err(|_| AppError::Internal)?;
 
@@ -118,17 +135,48 @@ pub async fn get_sync_data(
     // }
     //
     // We build this as a JSON string to avoid parsing/re-serializing the (potentially huge) ciphers array.
+    // Collections the user can access (direct assignment + access_all orgs).
+    let user_collection_ids = CollectionCipher::list_collection_ids_for_user(&db, &user_id).await?;
+    let mut collections: Vec<Value> = Vec::new();
+    for cid in &user_collection_ids {
+        if let Some(coll) = Collection::find_by_id(&db, cid).await? {
+            collections.push(coll.to_json(&coll.name));
+        }
+    }
+    let collections_json = serde_json::to_string(&collections).map_err(|_| AppError::Internal)?;
+
+    // Policies of the user's organizations (enabled only).
+    let mut policies: Vec<Value> = Vec::new();
+    for oid in &user_org_ids {
+        let pols = OrgPolicy::list_by_org(&db, oid).await?;
+        for p in pols {
+            if p.enabled {
+                policies.push(p.to_json());
+            }
+        }
+    }
+    let policies_json = serde_json::to_string(&policies).map_err(|_| AppError::Internal)?;
+
+    // Ciphers: personal + org (access_all membership or via collection assignment).
+    let cipher_where = "WHERE c.user_id = ?1 \
+        OR c.organization_id IN (SELECT org_id FROM users_organizations WHERE user_id = ?1 AND access_all = 1 AND status = 2) \
+        OR c.id IN (SELECT cc.cipher_id FROM ciphers_collections cc WHERE cc.collection_id IN (SELECT collection_id FROM users_collections WHERE user_id = ?1))";
+
     let mut response = String::with_capacity(capacity);
     response.push_str("{\"profile\":");
     response.push_str(&profile_json);
     response.push_str(",\"folders\":");
     response.push_str(&folders_json);
-    response.push_str(",\"collections\":[],\"policies\":[],\"ciphers\":");
+    response.push_str(",\"collections\":");
+    response.push_str(&collections_json);
+    response.push_str(",\"policies\":");
+    response.push_str(&policies_json);
+    response.push_str(",\"ciphers\":");
     ciphers::append_cipher_json_array_raw(
         &mut response,
         &db,
         include_attachments,
-        "WHERE c.user_id = ?1",
+        cipher_where,
         &[user_id.clone().into()],
         "",
         force_row_query,

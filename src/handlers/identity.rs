@@ -17,7 +17,10 @@ use crate::{
     error::AppError,
     handlers::{
         allow_totp_drift, server_password_iterations,
-        twofactor::{is_twofactor_enabled, list_user_twofactors},
+        twofactor::{
+            enabled_twofactor_provider_ids, is_twofactor_enabled, list_user_twofactors,
+            send_email_otp, validate_email_login, validate_yubikey_login,
+        },
     },
     models::{
         auth_request::AuthRequest,
@@ -230,7 +233,10 @@ async fn authenticate_password_grant(
     let device_request = parse_password_device_request(payload)?;
     let user = User::find_by_email(db, &username.to_lowercase())
         .await?
-        .ok_or_else(|| AppError::Unauthorized("Invalid credentials".to_string()))?;
+        .ok_or_else(|| AppError::IdentityError {
+            error: "invalid_grant".to_string(),
+            description: "invalid_username_or_password".to_string(),
+        })?;
 
     // Bitwarden "login with device" flow:
     // When `authrequest` is present, clients send the auth-request access code in the `password`
@@ -265,7 +271,10 @@ async fn authenticate_password_grant(
 
     let verification = user.verify_master_password(&password_hash).await?;
     if !verification.is_valid() {
-        return Err(AppError::Unauthorized("Invalid credentials".to_string()));
+        return Err(AppError::IdentityError {
+            error: "invalid_grant".to_string(),
+            description: "invalid_username_or_password".to_string(),
+        });
     }
 
     Ok(PasswordGrantAuthContext {
@@ -538,17 +547,21 @@ pub async fn token(
             .await?;
 
             let twofactors: Vec<TwoFactor> = list_user_twofactors(&db, &user.id).await?;
-            let twofactor_ids = vec![TwoFactorType::Authenticator as i32];
+            let twofactor_ids = enabled_twofactor_provider_ids(&twofactors);
             let mut should_issue_remember = false;
 
             if is_twofactor_enabled(&twofactors) {
                 let selected_id = payload.two_factor_provider.unwrap_or(twofactor_ids[0]);
-                let twofactor_code = payload.two_factor_token.as_deref().ok_or_else(|| {
-                    AppError::TwoFactorRequired(json_err_twofactor(&twofactor_ids))
-                })?;
+
+                let require_code = || {
+                    payload.two_factor_token.as_deref().ok_or_else(|| {
+                        AppError::TwoFactorRequired(json_err_twofactor(&twofactor_ids))
+                    })
+                };
 
                 match TwoFactorType::from_i32(selected_id) {
                     Some(TwoFactorType::Authenticator) => {
+                        let twofactor_code = require_code()?;
                         let tf = twofactors
                             .iter()
                             .find(|tf| {
@@ -576,7 +589,72 @@ pub async fn token(
 
                         should_issue_remember = payload.two_factor_remember == Some(1);
                     }
+                    Some(TwoFactorType::Email) => {
+                        let tf = twofactors
+                            .iter()
+                            .find(|tf| tf.enabled && tf.atype == TwoFactorType::Email as i32)
+                            .ok_or_else(|| {
+                                AppError::BadRequest("Email 2FA not configured".to_string())
+                            })?;
+
+                        match payload.two_factor_token.as_deref() {
+                            None => {
+                                // Send a fresh token, then challenge the client.
+                                send_email_otp(&db, &env, &user.id, &user.email).await?;
+                                return Err(AppError::TwoFactorRequired(json_err_twofactor(
+                                    &twofactor_ids,
+                                )));
+                            }
+                            Some(code) => {
+                                validate_email_login(&db, code, tf).await?;
+                                should_issue_remember = payload.two_factor_remember == Some(1);
+                            }
+                        }
+                    }
+                    Some(TwoFactorType::YubiKey) => {
+                        let twofactor_code = require_code()?;
+                        let tf = twofactors
+                            .iter()
+                            .find(|tf| tf.enabled && tf.atype == TwoFactorType::YubiKey as i32)
+                            .ok_or_else(|| {
+                                AppError::BadRequest("Yubikey 2FA not configured".to_string())
+                            })?;
+                        validate_yubikey_login(env.as_ref(), twofactor_code, &tf.data).await?;
+                        should_issue_remember = payload.two_factor_remember == Some(1);
+                    }
+                    Some(TwoFactorType::Duo) => {
+                        let twofactor_code = require_code()?;
+                        crate::handlers::duo::validate_duo_login(
+                            env.as_ref(),
+                            &user,
+                            twofactor_code,
+                        )
+                        .await?;
+                        should_issue_remember = payload.two_factor_remember == Some(1);
+                    }
+                    Some(TwoFactorType::Webauthn) => {
+                        let assertion_str =
+                            payload.two_factor_token.as_deref().ok_or_else(|| {
+                                AppError::TwoFactorRequired(json_err_twofactor(&twofactor_ids))
+                            })?;
+                        let assertion: Value =
+                            serde_json::from_str(assertion_str).map_err(|_| {
+                                AppError::BadRequest("Invalid WebAuthn response".to_string())
+                            })?;
+                        let tf = twofactors
+                            .iter()
+                            .find(|tf| tf.enabled && tf.atype == TwoFactorType::Webauthn as i32)
+                            .ok_or_else(|| {
+                                AppError::BadRequest("WebAuthn 2FA not configured".to_string())
+                            })?;
+                        crate::handlers::webauth::validate_webauthn_login(
+                            &db, &user, &tf.data, &assertion,
+                        )
+                        .await?;
+                        should_issue_remember = payload.two_factor_remember == Some(1);
+                    }
                     Some(TwoFactorType::Remember) => {
+                        let twofactor_code = require_code()?;
                         validate_remember_token(
                             env.as_ref(),
                             &user,
@@ -587,6 +665,7 @@ pub async fn token(
                         should_issue_remember = payload.two_factor_remember == Some(1);
                     }
                     Some(TwoFactorType::RecoveryCode) => {
+                        let twofactor_code = require_code()?;
                         if let Some(ref stored_code) = user.totp_recover {
                             if !ct_eq(&stored_code.to_uppercase(), &twofactor_code.to_uppercase()) {
                                 return Err(AppError::BadRequest(
@@ -679,9 +758,46 @@ pub async fn token(
                 two_factor_remember_token,
             )
         }
+        "authorization_code" => {
+            // SSO (OIDC) login. The client sends the SSO `state` in the `code`
+            // field and its PKCE `code_verifier`. We resolve the IdP identity,
+            // match an existing account, and issue tokens.
+            let sso_state = required_field(payload.password.as_deref(), "code")
+                .or_else(|_| required_field(payload.username.as_deref(), "code"))
+                .map_err(|_| AppError::BadRequest("invalid_grant".to_string()))?;
+
+            let user = crate::handlers::sso::sso_resolve_user(&env, &sso_state).await?;
+
+            let device_request = DeviceAuthRequest {
+                client_id: required_field(payload.client_id.as_deref(), "client_id")
+                    .map_err(|_| AppError::BadRequest("invalid_grant".to_string()))?,
+                identifier: required_field(
+                    payload.device_identifier.as_deref(),
+                    "device_identifier",
+                )
+                .map_err(|_| AppError::BadRequest("invalid_grant".to_string()))?,
+                name: payload
+                    .device_name
+                    .clone()
+                    .unwrap_or_else(|| "SSO".to_string()),
+                r#type: parse_required_device_type(payload.device_type.as_deref(), "device_type")
+                    .unwrap_or(14),
+            };
+
+            let mut device = Device::get_or_create(
+                &db,
+                device_request.identifier,
+                user.id.clone(),
+                device_request.name,
+                device_request.r#type,
+            )
+            .await?;
+            device.touch(&db).await?;
+
+            generate_tokens_and_response(user, &device, &device_request.client_id, &env, None)
+        }
         "refresh_token" => {
             // When a refresh token is invalid or missing we need to respond with an HTTP BadRequest (400)
-            // It also needs to return a json which holds at least a key `error` with the value `invalid_grant`
             // See the link below for details
             // https://github.com/bitwarden/clients/blob/2ee158e720a5e7dbe3641caf80b569e97a1dd91b/libs/common/src/services/api.service.ts#L1786-L1797
             let refresh_token = required_field(payload.refresh_token.as_deref(), "refresh_token")

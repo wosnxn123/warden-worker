@@ -17,3 +17,5 @@ sql/global_domains_seed.sql
 .codex/
 .cursor/
 .claude/
+# CNB platform workspace config
+.cnb.yml

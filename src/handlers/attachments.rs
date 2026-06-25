@@ -41,12 +41,16 @@ pub(crate) enum StorageBackend {
     KV,
     /// Cloudflare R2 - requires credit card, no practical size limit
     R2,
+    /// Microsoft Graph OneDrive (E3/M365) — uses the configured service account's drive.
+    OneDrive,
 }
 
 /// Detect which storage backend is available.
-/// Priority: R2 if bound, otherwise KV.
+/// Priority: OneDrive (if MSGRAPH_* configured) > R2 > KV.
 pub(crate) fn get_storage_backend(env: &Env) -> Option<StorageBackend> {
-    if env.bucket(ATTACHMENTS_BUCKET).is_ok() {
+    if crate::msgraph::graph_config(env).is_some() {
+        Some(StorageBackend::OneDrive)
+    } else if env.bucket(ATTACHMENTS_BUCKET).is_ok() {
         Some(StorageBackend::R2)
     } else if env.kv(ATTACHMENTS_KV).is_ok() {
         Some(StorageBackend::KV)
@@ -564,6 +568,14 @@ pub(crate) async fn delete_storage_objects(env: &Env, keys: &[String]) -> Result
             }
             Ok(())
         }
+        Some(StorageBackend::OneDrive) => {
+            for key in keys {
+                if let Err(e) = crate::msgraph::delete_file(env, key).await {
+                    log::warn!("OneDrive delete error for key '{key}': {e}");
+                }
+            }
+            Ok(())
+        }
         None => Ok(()), // No-op if attachments not enabled
     }
 }
@@ -658,10 +670,28 @@ pub(crate) async fn ensure_cipher_for_user(
 
     let cipher = cipher.ok_or_else(|| AppError::NotFound("Cipher not found".to_string()))?;
 
+    // Organization ciphers are allowed: the user must be a confirmed member of
+    // the owning org (checked at the handler level where the org id is known).
     if cipher.organization_id.is_some() {
-        return Err(AppError::BadRequest(
-            "Organization attachments are not supported".to_string(),
-        ));
+        // Verify the user has access to this org cipher.
+        let org_id = cipher.organization_id.as_ref().unwrap();
+        let has_access: Option<serde_json::Value> = db
+            .prepare(
+                "SELECT 1 FROM users_organizations
+                 WHERE user_id = ?1 AND org_id = ?2 AND status = 2
+                 AND (access_all = 1 OR EXISTS (
+                     SELECT 1 FROM users_collections uc
+                     JOIN ciphers_collections cc ON cc.collection_id = uc.collection_id
+                     WHERE uc.user_id = ?1 AND cc.cipher_id = ?3
+                 ))",
+            )
+            .bind(&[user_id.into(), org_id.clone().into(), cipher_id.into()])?
+            .first(None)
+            .await
+            .map_err(|_| AppError::Database)?;
+        if has_access.is_none() {
+            return Err(AppError::NotFound("Cipher not found".to_string()));
+        }
     }
 
     if cipher.deleted_at.is_some() {
@@ -764,6 +794,9 @@ pub(crate) async fn upload_to_storage(
             }
             builder.execute().await.map_err(AppError::Worker)?;
             Ok(())
+        }
+        Some(StorageBackend::OneDrive) => {
+            crate::msgraph::upload_file_bytes(env, key, &data, _content_type.as_deref()).await
         }
         None => Err(AppError::BadRequest(
             "Attachments are not enabled".to_string(),

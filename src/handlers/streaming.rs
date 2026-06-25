@@ -369,6 +369,9 @@ async fn put_stream_to_storage(
                 })?;
             Ok(())
         }
+        StorageBackend::OneDrive => {
+            crate::msgraph::upload_file(env, key, body, content_type, declared_size).await
+        }
     }
 }
 
@@ -436,6 +439,10 @@ async fn stream_download_from_storage(
                 }
             }
             let resp = builder.stream(stream);
+            Ok(resp)
+        }
+        StorageBackend::OneDrive => {
+            let resp = crate::msgraph::download_file(env, key).await?;
             Ok(resp)
         }
     }

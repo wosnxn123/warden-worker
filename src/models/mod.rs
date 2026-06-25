@@ -1,10 +1,16 @@
 pub mod attachment;
 pub mod auth_request;
 pub mod cipher;
+pub mod collection;
 pub mod device;
+pub mod emergency_access;
+pub mod event;
 pub mod folder;
 pub mod import;
+pub mod org_policy;
+pub mod organization;
 pub mod send;
+pub mod sso_auth;
 pub mod sync;
 pub mod twofactor;
 pub mod user;

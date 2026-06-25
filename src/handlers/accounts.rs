@@ -208,18 +208,31 @@ pub async fn register(
         }
     }
 
-    let allowed_emails = env
-        .secret("ALLOWED_EMAILS")
-        .map_err(|_| AppError::Internal)?;
-    let allowed_emails = allowed_emails
-        .as_ref()
-        .as_string()
-        .ok_or_else(|| AppError::Internal)?;
-    if !allowed_emails
-        .split(',')
-        .any(|pattern| glob_match(pattern.trim(), &payload.email))
-    {
-        return Err(AppError::Unauthorized("Not allowed to signup".to_string()));
+    let db = db::get_db(&env)?;
+    let now = db::now_string();
+
+    // Check if the email is already registered (before doing any crypto).
+    if let Some(_existing) = User::find_by_email(&db, &payload.email.to_lowercase()).await? {
+        return Err(AppError::BadRequest(format!(
+            "Email {} is already registered",
+            payload.email
+        )));
+    }
+
+    // Optional allow-list. When unset, registration is open (subject to
+    // DISABLE_USER_REGISTRATION and rate limiting).
+    if let Ok(allowed) = env.secret("ALLOWED_EMAILS") {
+        if let Some(patterns) = allowed.as_ref().as_string() {
+            if !patterns.is_empty()
+                && !patterns
+                    .split(',')
+                    .any(|pattern| glob_match(pattern.trim(), &payload.email))
+            {
+                return Err(AppError::Unauthorized(
+                    "You are not allowed to sign up for this server".to_string(),
+                ));
+            }
+        }
     }
 
     ensure_supported_kdf(
@@ -238,9 +251,6 @@ pub async fn register(
         password_iterations as u32,
     )
     .await?;
-
-    let db = db::get_db(&env)?;
-    let now = db::now_string();
 
     // Only store kdf_memory and kdf_parallelism for Argon2id, clear for PBKDF2
     let (kdf_memory, kdf_parallelism) = if payload.kdf == KDF_TYPE_ARGON2ID {
@@ -1105,5 +1115,28 @@ pub async fn post_sstamp(
     // so putting it ahead of device deletion is not guaranteed to send the logout push before the deletion.
     notifications::publish_user_logout((*env).clone(), claims.sub, now, None);
 
+    Ok(Json(json!({})))
+}
+
+/// POST /api/accounts/otp — request an email OTP for protected actions
+/// (e.g. delete account, purge vault when email 2FA is enabled).
+#[worker::send]
+pub async fn request_otp(
+    State(env): State<Arc<Env>>,
+    claims: Claims,
+) -> Result<Json<Value>, AppError> {
+    let db = db::get_db(&env)?;
+    let user_id = &claims.sub;
+
+    let user_value: Value = db
+        .prepare("SELECT * FROM users WHERE id = ?1")
+        .bind(&[user_id.clone().into()])?
+        .first(None)
+        .await
+        .map_err(|_| AppError::Database)?
+        .ok_or_else(|| AppError::Unauthorized("User not found".to_string()))?;
+    let user: User = serde_json::from_value(user_value).map_err(|_| AppError::Internal)?;
+
+    super::twofactor::send_email_otp(&db, &env, user_id, &user.email).await?;
     Ok(Json(json!({})))
 }

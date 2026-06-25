@@ -4,6 +4,9 @@
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Deploy to Cloudflare Workers](https://img.shields.io/badge/Deploy%20to-Cloudflare%20Workers-orange?logo=cloudflare&logoColor=white)](https://workers.cloudflare.com/)
 
+> [!NOTE]
+> 📖 中文文档请见 [README.zh-CN.md](README.zh-CN.md) / Chinese documentation: [README.zh-CN.md](README.zh-CN.md)
+
 This project provides a self-hosted, Bitwarden-compatible server that can be deployed to Cloudflare Workers for free. It's designed to be low-maintenance, allowing you to "deploy and forget" without worrying about server management or recurring costs.
 
 ## Why another Bitwarden server?
@@ -51,16 +54,121 @@ See the [deployment guide](docs/deployment.md) for setup details. R2 may incur a
 
 ## Current Status
 
-**This project is not yet feature-complete**, ~~and it may never be~~. It currently supports the core functionality of a personal vault, including TOTP. However, it does **not** support the following features:
+This project implements most Bitwarden personal and team features:
 
-* Sharing
-* 2FA login (except TOTP)
-* Emergency access
-* Admin operations
-* Organizations
-* Other Bitwarden advanced features
+* **Core Vault:** ciphers, folders, file attachments, Bitwarden Send, import/export, trash/auto-purge, archive
+* **2FA:** Authenticator (TOTP), Email, Yubikey, Duo, and WebAuthn (passkey); recovery codes; protected-action OTP
+* **Organizations & Sharing:** create orgs, invite/accept/confirm members (key exchange), collections with per-user permissions, cipher sharing into orgs, org import, organization policies
+* **Emergency Access:** invite → accept → confirm → initiate → approve/reject → view / takeover (+ password reset)
+* **SSO (OIDC):** single sign-on via a configured OpenID Connect IdP (SSO authenticates identity; the vault is still unlocked with the master password)
+* **Devices, device login (auth requests), live sync (WebSocket + mobile push), TOTP**
+* **Event log:** organization audit trail
+* **SCIM 2.0 directory sync:** provision users and groups from Entra ID / Okta / etc.
+* **Microsoft Graph integration:** Exchange Online email delivery + OneDrive for Business attachment/Send file storage (leverages E3/M365 subscriptions)
 
-There are no immediate plans to implement these features. The primary goal of this project is to provide a simple, free, and low-maintenance personal password manager.
+All Bitwarden features are now supported.
+
+### Email delivery
+
+Email-dependent features (Email 2FA, emergency-access invitations, password hints) need an external mail provider since Workers cannot speak SMTP. Configure via environment variables:
+
+* `MAIL_PROVIDER`: `resend`, `webhook`, or omit to disable (features gracefully no-op)
+* `RESEND_API_KEY` + `MAIL_FROM` for the Resend provider
+* `MAIL_WEBHOOK_URL` (+ optional `MAIL_FROM`) for a custom HTTP relay
+
+### Yubikey 2FA
+
+Yubikey OTP verification calls the Yubico validation server (HMAC-signed requests, response signature verified). Configure:
+
+* `YUBICO_CLIENT_ID` (var) and `YUBICO_SECRET_KEY` (secret)
+
+If unset, Yubikey endpoints return an error.
+
+### Duo 2FA
+
+Duo push/OTP verification uses the Duo Auth API (HMAC-SHA1-signed requests). Configure:
+
+* `DUO_IKEY` (var), `DUO_SKEY` (secret), `DUO_HOST` (var), `DUO_AKEY` (secret, optional)
+
+### WebAuthn (passkey) 2FA
+
+Passkey registration and login assertion verification run entirely in the WASM sandbox using pure-Rust crypto (`p256` ECDSA-P256 + `ciborium` CBOR decoding + `sha2`). No external configuration required.
+
+### SSO (OIDC)
+
+Single sign-on via an OpenID Connect provider. Configure:
+
+* `SSO_ENABLED` (var) — set to `true` to enable
+* `SSO_AUTHORITY` (var) — IdP issuer URL (e.g. `https://login.microsoftonline.com/{tenant}/v2.0`)
+* `SSO_CLIENT_ID` (var), `SSO_CLIENT_SECRET` (secret)
+* `SSO_SCOPES` (var, optional, default `openid email profile`)
+* `SSO_CALLBACK_URL` (var, optional) — defaults to `{BASE_URL}/identity/connect/oidc-signin`
+* `SSO_SIGNUPS_MATCH_EMAIL` (var, default `true`) — only allow SSO login for emails that match an existing account
+* `SSO_ALLOW_UNVERIFIED_EMAIL` (var, default `false`)
+
+The callback URL must be registered as a redirect URI at your IdP.
+
+#### Multi-tenant SSO (multiple Microsoft E3 organizations)
+
+If you have multiple E3/M365 tenants, configure `SSO_TENANTS` as a JSON array to let users pick their organization:
+
+```json
+[
+  {"id":"contoso","name":"Contoso (E3)","authority":"https://login.microsoftonline.com/tenant-a/v2.0","client_id":"...","description":"Contoso Ltd"},
+  {"id":"fabrikam","name":"Fabrikam (E3)","authority":"https://login.microsoftonline.com/tenant-b/v2.0","client_id":"...","description":"Fabrikam Inc"}
+]
+```
+
+Clients call `GET /identity/connect/sso-tenants` to list available organizations, then pass `domain_hint=<id>` to `/identity/connect/authorize`. When unset, single-tenant `SSO_AUTHORITY`/`SSO_CLIENT_ID` is used.
+
+### Admin Panel
+
+A built-in admin panel is available at `/admin`. It is gated by the `ADMIN_TOKEN` secret — when unset, the panel returns 404 (disabled).
+
+Features:
+- Login with the admin token (cookie-based session)
+- Dashboard with user/cipher/folder/send/org/attachment counts
+- User list with email verification and deletion actions
+- Server config overview (SSO tenants, push, mail, storage backends, 2FA providers)
+
+Set `ADMIN_TOKEN` to a strong secret to enable:
+```bash
+wrangler secret put ADMIN_TOKEN
+```
+
+### Key Connector
+
+Allows SSO-only users to retrieve their user key without a master password. The Worker itself acts as the Key Connector. Enable:
+
+* `KEY_CONNECTOR_ENABLED=true` (var)
+* `KEY_CONNECTOR_URL` (var) — the Worker's own `/api/key-connector` base URL
+
+### SCIM 2.0 (Directory Sync)
+
+Provision users and groups into an organization from your identity provider (Entra ID, Okta, OneLogin, etc.). SCIM endpoints follow RFC 7643/7644:
+
+- `GET / POST /scim/v2/{org_id}/Users` — list / provision users
+- `GET / PUT / PATCH / DELETE /scim/v2/{org_id}/Users/{id}` — manage a user
+- `GET / POST /scim/v2/{org_id}/Groups` — list / create groups
+- `DELETE /scim/v2/{org_id}/Groups/{id}` — delete a group
+
+Authentication: `Authorization: Bearer {org_id}:{api_key}`. Each organization's API key is stored hashed (SHA-256) in `organization_api_keys`. Generate a key for an org via SQL:
+
+```sql
+INSERT INTO organization_api_keys (org_id, api_key_hash, created_at, updated_at)
+VALUES ('<org-uuid>', '<sha256-hex-of-key>', datetime('now'), datetime('now'));
+```
+
+SCIM Users map to `users_organizations` memberships (create = invite, active = confirmed, inactive = invited, delete = removed). SCIM Groups map to the `groups` table.
+
+Enables Exchange Online email and OneDrive attachment storage using your E3/M365 subscription. Create an Azure AD App Registration with application permissions `Mail.Send` and `Files.ReadWrite.All` (admin-granted). Configure:
+
+* `MSGRAPH_TENANT_ID` (var), `MSGRAPH_CLIENT_ID` (var), `MSGRAPH_CLIENT_SECRET` (secret)
+* `MSGRAPH_USER` (var) — UPN of the service account owning the OneDrive used for storage
+* `MSGRAPH_MAIL_USER` (var, optional) — sender UPN; defaults to `MSGRAPH_USER`
+* `MSGRAPH_BASE_PATH` (var, optional) — OneDrive folder, default `/warden-attachments`
+* `MAIL_PROVIDER=msgraph` to send email via Exchange Online
+* When `MSGRAPH_*` is configured, OneDrive takes priority over R2/KV for attachment storage
 
 ## Compatibility
 

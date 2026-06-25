@@ -108,6 +108,12 @@ pub async fn create_cipher(
     .run()
     .await?;
 
+    if let Some(ref cids) = cipher.collection_ids {
+        if cipher.organization_id.is_some() && !cids.is_empty() {
+            crate::models::collection::CollectionCipher::set_for_cipher(&db, &cipher.id, cids)
+                .await?;
+        }
+    }
     attachments::hydrate_cipher_attachments(&db, env.as_ref(), &mut cipher).await?;
     db::touch_user_updated_at(&db, &claims.sub, &cipher.updated_at).await?;
 
@@ -1028,7 +1034,7 @@ fn cipher_json_expr(attachments_enabled: bool) -> String {
             'viewPassword', json('true'),
             'permissions', json_object('delete', json('true'), 'restore', json('true')),
             'organizationUseTotp', json('false'),
-            'collectionIds', json('[]'),
+            'collectionIds', COALESCE((SELECT json_group_array(cc.collection_id) FROM ciphers_collections cc WHERE cc.cipher_id = c.id), json('[]')),
             'revisionDate', c.updated_at,
             'creationDate', c.created_at,
             'deletedDate', c.deleted_at,
@@ -1224,4 +1230,90 @@ pub(crate) async fn append_from_rows(
     }
     out.push(']');
     Ok(())
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShareCipherRequest {
+    #[serde(alias = "Cipher")]
+    pub cipher: CipherRequestData,
+    #[serde(default, alias = "CollectionIds")]
+    pub collection_ids: Vec<String>,
+}
+
+/// PUT /api/ciphers/{id}/share — move a personal cipher into an organization.
+#[worker::send]
+pub async fn share_cipher(
+    claims: Claims,
+    State(env): State<Arc<Env>>,
+    Path(id): Path<String>,
+    Json(payload): Json<ShareCipherRequest>,
+) -> Result<Json<Cipher>, AppError> {
+    let db = db::get_db(&env)?;
+    let existing = fetch_cipher_for_user(&db, &id, &claims.sub).await?;
+
+    let org_id = payload
+        .cipher
+        .organization_id
+        .clone()
+        .ok_or_else(|| AppError::BadRequest("organizationId is required".to_string()))?;
+
+    // The user must be a confirmed member of the target organization.
+    let membership =
+        crate::models::organization::Membership::find_by_user_and_org(&db, &claims.sub, &org_id)
+            .await?
+            .filter(|m| m.status == crate::models::organization::STATUS_CONFIRMED)
+            .ok_or_else(|| AppError::NotFound("Organization not found".to_string()))?;
+    let _ = membership;
+
+    let cipher_data = CipherData::new(
+        payload.cipher.name,
+        payload.cipher.notes,
+        payload.cipher.type_fields,
+    );
+    let data_value = serde_json::to_value(&cipher_data).map_err(|_| AppError::Internal)?;
+    let now = db::now_string();
+
+    let cipher = Cipher {
+        id: id.clone(),
+        user_id: Some(claims.sub.clone()),
+        organization_id: Some(org_id.clone()),
+        r#type: payload.cipher.r#type,
+        data: data_value,
+        favorite: payload.cipher.favorite.unwrap_or(false),
+        folder_id: None,
+        deleted_at: existing.deleted_at,
+        archived_at: existing.archived_at,
+        created_at: existing.created_at,
+        updated_at: now.clone(),
+        object: "cipher".to_string(),
+        organization_use_totp: false,
+        edit: true,
+        view_password: true,
+        collection_ids: Some(payload.collection_ids.clone()),
+        attachments: None,
+    };
+
+    let data = serde_json::to_string(&cipher.data).map_err(|_| AppError::Internal)?;
+    d1_query!(
+        &db,
+        "UPDATE ciphers SET organization_id = ?1, type = ?2, data = ?3, favorite = ?4, folder_id = NULL, updated_at = ?5 WHERE id = ?6 AND user_id = ?7",
+        cipher.organization_id,
+        cipher.r#type,
+        data,
+        cipher.favorite,
+        &now,
+        &id,
+        &claims.sub
+    )
+    .map_err(|_| AppError::Database)?
+    .run()
+    .await
+    .map_err(|_| AppError::Database)?;
+
+    crate::models::collection::CollectionCipher::set_for_cipher(&db, &id, &payload.collection_ids)
+        .await?;
+
+    db::touch_user_updated_at(&db, &claims.sub, &now).await?;
+    Ok(Json(cipher))
 }
